@@ -1587,16 +1587,74 @@ local function getStreamedPartPosition(obj)
 	return nil, nil
 end
 
-local function teleportCharacterTo(worldPos, offsetVec)
+local function teleportCharacterTo(worldPos, offsetVec, faceTargetPos, maxStreamSec)
 	local char = localPlayer.Character
 	local hum = char and char:FindFirstChildOfClass("Humanoid")
 	local root = char and char:FindFirstChild("HumanoidRootPart")
 	if not char or not hum or not root or hum.Health <= 0 then
 		return false
 	end
+	local destPos = worldPos + (offsetVec or Vector3.new(0, 2.2, 0))
+	local jumpDist = (destPos - root.Position).Magnitude
 	root.AssemblyLinearVelocity = Vector3.zero
 	root.AssemblyAngularVelocity = Vector3.zero
-	char:PivotTo(CFrame.new(worldPos + (offsetVec or Vector3.new(0, 2.2, 0))))
+	if faceTargetPos then
+		local lookTarget = Vector3.new(faceTargetPos.X, destPos.Y, faceTargetPos.Z)
+		if (lookTarget - destPos).Magnitude > 0.2 then
+			char:PivotTo(CFrame.lookAt(destPos, lookTarget))
+		else
+			char:PivotTo(CFrame.new(destPos))
+		end
+	else
+		char:PivotTo(CFrame.new(destPos) * (char:GetPivot().Rotation))
+	end
+
+	if jumpDist > 80 then
+		local rayParams = RaycastParams.new()
+		rayParams.FilterType = Enum.RaycastFilterType.Exclude
+		rayParams.FilterDescendantsInstances = { char }
+		pcall(function()
+			rayParams.RespectCanCollide = true
+		end)
+		local origin = root.Position + Vector3.new(0, 2, 0)
+		if not Workspace:Raycast(origin, Vector3.new(0, -14, 0), rayParams) then
+			local prevAnchored = root.Anchored
+			root.Anchored = true
+			task.spawn(function()
+				pcall(function()
+					localPlayer:RequestStreamAroundAsync(destPos, 3)
+				end)
+			end)
+			local t0 = clockNow()
+			local maxWait = maxStreamSec or 2.0
+			while not destroyed and root.Parent and (clockNow() - t0) < maxWait do
+				if Workspace:Raycast(root.Position + Vector3.new(0, 2, 0), Vector3.new(0, -14, 0), rayParams) then
+					break
+				end
+				task.wait(0.06)
+			end
+			local hit = Workspace:Raycast(root.Position + Vector3.new(0, 2, 0), Vector3.new(0, -14, 0), rayParams)
+			if hit and root.Parent then
+				local hipHeight = (hum.RigType == Enum.HumanoidRigType.R15 and hum.HipHeight or 2) + root.Size.Y * 0.5
+				local landedPos = Vector3.new(hit.Position.X, hit.Position.Y + hipHeight + 0.15, hit.Position.Z)
+				if faceTargetPos then
+					local lookPt = Vector3.new(faceTargetPos.X, landedPos.Y, faceTargetPos.Z)
+					if (lookPt - landedPos).Magnitude > 0.2 then
+						char:PivotTo(CFrame.lookAt(landedPos, lookPt))
+					else
+						char:PivotTo(CFrame.new(landedPos))
+					end
+				else
+					char:PivotTo(CFrame.new(landedPos) * (char:GetPivot().Rotation))
+				end
+			end
+			if root.Parent then
+				root.AssemblyLinearVelocity = Vector3.zero
+				root.AssemblyAngularVelocity = Vector3.zero
+				root.Anchored = prevAnchored == true
+			end
+		end
+	end
 	return true
 end
 
@@ -1609,41 +1667,35 @@ local function stopCharacterMovement()
 	end
 end
 
-local function equipAndActivateTool(char, hum, preferredName)
-	local equipped = char:FindFirstChildOfClass("Tool")
-	if preferredName and (not equipped or not string.find(string.lower(equipped.Name), string.lower(preferredName), 1, true)) then
-		local backpack = localPlayer:FindFirstChildOfClass("Backpack")
-		if backpack then
-			for _, item in ipairs(backpack:GetChildren()) do
-				if item:IsA("Tool") and string.find(string.lower(item.Name), string.lower(preferredName), 1, true) then
-					hum:EquipTool(item)
-					equipped = item
-					break
-				end
+local function findExactTool(char, exactName)
+	local lowTarget = string.lower(exactName)
+	for _, item in ipairs(char:GetChildren()) do
+		if item:IsA("Tool") and string.find(string.lower(item.Name), lowTarget, 1, true) then
+			return item, true
+		end
+	end
+	local backpack = localPlayer:FindFirstChildOfClass("Backpack")
+	if backpack then
+		for _, item in ipairs(backpack:GetChildren()) do
+			if item:IsA("Tool") and string.find(string.lower(item.Name), lowTarget, 1, true) then
+				return item, false
 			end
 		end
 	end
-	if not equipped then
-		local backpack = localPlayer:FindFirstChildOfClass("Backpack")
-		local firstTool = backpack and backpack:FindFirstChildOfClass("Tool")
-		if firstTool then
-			hum:EquipTool(firstTool)
-			equipped = firstTool
-		end
-	end
-	if equipped then
-		pcall(function()
-			equipped:Activate()
-		end)
-		return true
-	end
-	return false
+	return nil, false
 end
 
 local function findOwnPlayerDimModel()
 	local dims = Workspace:FindFirstChild("Dimensions")
 	if not dims then
 		return nil
+	end
+	local myCode = localPlayer:GetAttribute("MyDimCode")
+	if myCode and myCode ~= "" then
+		local byAttr = dims:FindFirstChild("Dim_" .. tostring(myCode))
+		if byAttr then
+			return byAttr
+		end
 	end
 	local playerDims = ReplicatedStorage:FindFirstChild("PlayerDims")
 	if playerDims then
@@ -1663,10 +1715,63 @@ local function findOwnPlayerDimModel()
 			return dim
 		end
 	end
-	for _, dim in ipairs(dims:GetChildren()) do
-		if string.sub(dim.Name, 1, 4) == "Dim_" then
-			return dim
+	return nil
+end
+
+local function findOwnCraftStationPos()
+	local garageFallback = nil
+	for _, cs in ipairs(CollectionService:GetTagged("CraftStation")) do
+		if cs:IsDescendantOf(Workspace) and cs:GetAttribute("OwnerId") == localPlayer.UserId then
+			local fullLower = string.lower(cs:GetFullName())
+			local okPos, pos = pcall(function()
+				return cs:IsA("Model") and cs:GetPivot().Position or cs.Position
+			end)
+			if okPos and typeof(pos) == "Vector3" then
+				if not string.find(fullLower, "bunker", 1, true) then
+					return pos
+				end
+				garageFallback = garageFallback or pos
+			end
 		end
+	end
+	if garageFallback then
+		return garageFallback
+	end
+	local ownDim = findOwnPlayerDimModel()
+	if ownDim then
+		local wb = ownDim:FindFirstChild("Workbench")
+		local cs = wb and wb:FindFirstChild("CraftStation")
+		if cs then
+			if cs:IsA("BasePart") then
+				return cs.Position
+			elseif cs:IsA("Model") then
+				return cs:GetPivot().Position
+			end
+		end
+		if wb then
+			local prompt = wb:FindFirstChild("CraftPrompt", true)
+			if prompt and prompt.Parent and prompt.Parent:IsA("BasePart") then
+				return prompt.Parent.Position
+			end
+		end
+		local sp = ownDim:GetAttribute("Spawn")
+		if typeof(sp) == "CFrame" then
+			return sp.Position
+		elseif typeof(sp) == "Vector3" then
+			return sp
+		end
+		local mid = ownDim:GetAttribute("Mid")
+		if typeof(mid) == "Vector3" then
+			return mid
+		end
+	end
+	local playerDims = ReplicatedStorage:FindFirstChild("PlayerDims")
+	local cfg = playerDims and playerDims:FindFirstChild("pd_" .. tostring(localPlayer.UserId))
+	local cfgSpawn = cfg and cfg:GetAttribute("Spawn")
+	if typeof(cfgSpawn) == "CFrame" then
+		return cfgSpawn.Position
+	elseif typeof(cfgSpawn) == "Vector3" then
+		return cfgSpawn
 	end
 	return nil
 end
@@ -1676,12 +1781,17 @@ local function getDimensionTargetPosition(dimName)
 	if not dims then
 		return nil
 	end
-	local dimModel = nil
 	if dimName == "OWN" then
-		dimModel = findOwnPlayerDimModel()
-	else
-		dimModel = dims:FindFirstChild(dimName)
+		local playerDims = ReplicatedStorage:FindFirstChild("PlayerDims")
+		local cfg = playerDims and playerDims:FindFirstChild("pd_" .. tostring(localPlayer.UserId))
+		local cfgSpawn = cfg and cfg:GetAttribute("Spawn")
+		if typeof(cfgSpawn) == "CFrame" then
+			return cfgSpawn.Position
+		elseif typeof(cfgSpawn) == "Vector3" then
+			return cfgSpawn
+		end
 	end
+	local dimModel = (dimName == "OWN") and findOwnPlayerDimModel() or dims:FindFirstChild(dimName)
 	if not dimModel then
 		return nil
 	end
@@ -1707,18 +1817,21 @@ local customMatFilter = ""
 local teleportToMatEnabled = true
 local autoLootEnabled = false
 local autoPromptEnabled = true
+local instantExecutorPrompt = false
 local autoSwingToolEnabled = true
+local autoLootChestsEnabled = true
 local includeDimensionsScan = true
 local lootMaxRange = 200
 local lootLoopInterval = 0.25
-local lootFolderNames = "DroppedLoot, Nodes"
-local lootTagNames = "OreNode"
+local lootFolderNames = "DroppedLoot, Nodes, QuestIngredients"
+local lootTagNames = "OreNode, QuestIngredient"
 local lootRunId = 0
 local nodeCooldownUntil = {}
 local cachedNodes = {}
 local lastCacheRebuildAt = 0
 local lastPickaxeSwingAt = 0
 local activeHoldPrompt = nil
+local lootChestWindowUntil = 0
 
 local matStatusLabel = matTab:AddLabel("Sẵn sàng | 25 Material & Dimensions")
 local lootStatsLabel = matTab:AddLabel("Kho thực: Scrap 0 | Lần nhặt phiên: 0")
@@ -1749,18 +1862,20 @@ local function releaseActivePrompt()
 	end
 end
 
+local function getNodeMaterialAttr(obj)
+	return obj:GetAttribute("MatKey") or obj:GetAttribute("Material") or obj:GetAttribute("MaterialId")
+end
+
+local function isChestCandidate(obj)
+	return obj and obj.Parent and obj.Parent.Name == "LootChests"
+end
+
 local function isNodeAvailable(obj)
 	if not obj or not obj.Parent or isCharacterPart(obj) then
 		return false
 	end
 	if obj:GetAttribute("Claimed") == true or obj:GetAttribute("Broken") == true or obj:GetAttribute("Disabled") == true then
 		return false
-	end
-	if CollectionService:HasTag(obj, "QuestIngredient") then
-		local ownerId = obj:GetAttribute("OwnerId")
-		if ownerId ~= nil and ownerId ~= localPlayer.UserId then
-			return false
-		end
 	end
 	local owner = obj:GetAttribute("OwnerId")
 	if owner ~= nil and owner ~= localPlayer.UserId then
@@ -1773,12 +1888,29 @@ local function isNodeAvailable(obj)
 	if pos.Y < -4000 then
 		return false
 	end
+	local core = obj:FindFirstChild("Core")
+	local p = (core and core:FindFirstChildWhichIsA("ProximityPrompt"))
+		or (obj:IsA("ProximityPrompt") and obj)
+		or obj:FindFirstChildWhichIsA("ProximityPrompt", true)
+	if isChestCandidate(obj) then
+		return (p ~= nil and p.Enabled)
+	end
+	local rawMat = tostring(getNodeMaterialAttr(obj) or "")
+	local isOreObj = CollectionService:HasTag(obj, "OreNode")
+		or obj:GetAttribute("Hits") ~= nil
+		or (MATERIAL_BY_ID[rawMat] and MATERIAL_BY_ID[rawMat].Kind == "Ore")
+		or false
+	local isDropObj = (obj.Parent and obj.Parent.Name == "DroppedLoot")
+		or (obj:FindFirstChildWhichIsA("ClickDetector", true) ~= nil)
+	if not ((p and p.Enabled) or isOreObj or isDropObj) then
+		return false
+	end
 	return true
 end
 
 local function rebuildMaterialCache(force)
 	local now = clockNow()
-	if not force and (now - lastCacheRebuildAt) < 1.5 and #cachedNodes > 0 then
+	if not force and (now - lastCacheRebuildAt) < 1.2 and #cachedNodes > 0 then
 		return cachedNodes
 	end
 	lastCacheRebuildAt = now
@@ -1807,6 +1939,15 @@ local function rebuildMaterialCache(force)
 		end
 	end
 
+	if autoLootChestsEnabled then
+		local chests = Workspace:FindFirstChild("LootChests")
+		if chests then
+			for _, chest in ipairs(chests:GetChildren()) do
+				addCandidate(chest)
+			end
+		end
+	end
+
 	if includeDimensionsScan then
 		local dims = Workspace:FindFirstChild("Dimensions")
 		if dims then
@@ -1815,14 +1956,14 @@ local function rebuildMaterialCache(force)
 					local sub = dim:FindFirstChild(subName)
 					if sub then
 						for _, child in ipairs(sub:GetChildren()) do
-							if child:GetAttribute("Material") ~= nil or child:GetAttribute("MaterialId") ~= nil or CollectionService:HasTag(child, "OreNode") then
+							if getNodeMaterialAttr(child) ~= nil or CollectionService:HasTag(child, "OreNode") or CollectionService:HasTag(child, "QuestIngredient") then
 								addCandidate(child)
 							end
 						end
 					end
 				end
 				for _, child in ipairs(dim:GetChildren()) do
-					if child:GetAttribute("Material") ~= nil or child:GetAttribute("MaterialId") ~= nil then
+					if getNodeMaterialAttr(child) ~= nil then
 						addCandidate(child)
 					end
 				end
@@ -1848,6 +1989,8 @@ local function matchMaterialTarget(obj)
 		local hay = string.lower(
 			obj.Name
 				.. " "
+				.. tostring(obj:GetAttribute("MatKey") or "")
+				.. " "
 				.. tostring(obj:GetAttribute("Material") or "")
 				.. " "
 				.. tostring(obj:GetAttribute("MaterialId") or "")
@@ -1865,8 +2008,11 @@ local function matchMaterialTarget(obj)
 	if filter.kind == "All" then
 		return true
 	end
+	if isChestCandidate(obj) then
+		return false
+	end
 
-	local rawAttr = tostring(obj:GetAttribute("Material") or obj:GetAttribute("MaterialId") or "")
+	local rawAttr = tostring(getNodeMaterialAttr(obj) or "")
 	local isOre = CollectionService:HasTag(obj, "OreNode") or (MATERIAL_BY_ID[rawAttr] and MATERIAL_BY_ID[rawAttr].Kind == "Ore") or false
 	if filter.kind == "Ore" then
 		return isOre
@@ -1954,28 +2100,19 @@ local function tryStreamSelectedDimension(originPos, checkRunFn)
 		return nil
 	end
 	if (dimPos - originPos).Magnitude > 180 then
-		matStatusLabel:Set("Đang di chuyển tới " .. targetDimName .. " để tải node...")
+		matStatusLabel:Set("Đang tải Dimension " .. targetDimName .. "...")
 		local char = localPlayer.Character
 		local root = char and char:FindFirstChild("HumanoidRootPart")
 		local prevCFrame = root and root.CFrame or nil
-		local wasAnchored = root and root.Anchored or false
 
-		if root then
-			root.Anchored = true
-		end
-		teleportCharacterTo(dimPos, Vector3.new(0, 4, 0))
-		task.spawn(function()
-			pcall(function()
-				localPlayer:RequestStreamAroundAsync(dimPos)
-			end)
-		end)
+		teleportCharacterTo(dimPos, Vector3.new(0, 4, 0), nil, 2.5)
 
 		local foundObj, foundPos, foundDist = nil, nil, nil
-		for _ = 1, 4 do
+		for _ = 1, 8 do
 			if destroyed or (checkRunFn and not checkRunFn()) then
 				break
 			end
-			task.wait(0.3)
+			task.wait(0.25)
 			rebuildMaterialCache(true)
 			foundObj, foundPos, foundDist = findNearestMaterialNode(dimPos, false)
 			if foundObj then
@@ -1983,13 +2120,8 @@ local function tryStreamSelectedDimension(originPos, checkRunFn)
 			end
 		end
 
-		if root and root.Parent then
-			root.AssemblyLinearVelocity = Vector3.zero
-			root.AssemblyAngularVelocity = Vector3.zero
-			root.Anchored = wasAnchored == true
-		end
 		if not foundObj and prevCFrame and char and char.Parent and root and root.Parent then
-			char:PivotTo(prevCFrame)
+			teleportCharacterTo(prevCFrame.Position, Vector3.zero, nil, 1.5)
 		end
 		return foundObj, foundPos, foundDist
 	end
@@ -2020,13 +2152,30 @@ local function holdPromptComplete(prompt, node, checkRunFn)
 		return false
 	end
 
-	if (promptPos - root.Position).Magnitude > (prompt.MaxActivationDistance - 0.6) then
+	pcall(function()
+		prompt.RequiresLineOfSight = false
+	end)
+
+	local safeRange = math.min(3.2, math.max(1.8, (prompt.MaxActivationDistance or 6) - 1.2))
+	if (promptPos - root.Position).Magnitude > safeRange then
 		if teleportToMatEnabled then
-			teleportCharacterTo(promptPos, Vector3.new(0, 1.8, 0))
-			task.wait(0.06)
+			teleportCharacterTo(promptPos, Vector3.new(0, 1.8, 1.8), promptPos, 2.0)
+			task.wait(0.22)
 		else
 			return false
 		end
+	end
+
+	local cam = Workspace.CurrentCamera
+	if cam and cam.CameraType ~= Enum.CameraType.Scriptable then
+		cam.CFrame = CFrame.lookAt(promptPos + Vector3.new(0, 5.5, 7.5), promptPos)
+		task.wait(0.08)
+	end
+
+	local matKey = tostring(getNodeMaterialAttr(node) or "")
+	local matBefore = matKey ~= "" and getRealMatCount(matKey) or 0
+	if isChestCandidate(node) then
+		lootChestWindowUntil = clockNow() + 4.0
 	end
 
 	activeHoldPrompt = prompt
@@ -2034,7 +2183,13 @@ local function holdPromptComplete(prompt, node, checkRunFn)
 		prompt:InputHoldBegin()
 	end)
 
-	local totalHold = math.max(0.08, (prompt.HoldDuration or 0) + 0.16)
+	local hasFirePrompt = (type(fireproximityprompt) == "function")
+	if instantExecutorPrompt and hasFirePrompt then
+		pcall(fireproximityprompt, prompt)
+		task.wait(0.12)
+	end
+
+	local totalHold = math.max(0.1, (prompt.HoldDuration or 0) + 0.25)
 	local deadline = clockNow() + totalHold
 	while clockNow() < deadline do
 		if destroyed or not node.Parent or not prompt.Parent or not prompt.Enabled then
@@ -2043,14 +2198,25 @@ local function holdPromptComplete(prompt, node, checkRunFn)
 		if node:GetAttribute("Claimed") == true or node:GetAttribute("Broken") == true then
 			break
 		end
+		if matKey ~= "" and getRealMatCount(matKey) > matBefore then
+			break
+		end
 		if checkRunFn and not checkRunFn() then
 			break
 		end
 		task.wait(0.05)
 	end
 
+	if node.Parent and prompt.Parent and prompt.Enabled and node:GetAttribute("Claimed") ~= true and hasFirePrompt then
+		pcall(fireproximityprompt, prompt)
+		task.wait(0.1)
+	end
+
 	releaseActivePrompt()
-	return (not node.Parent) or (node:GetAttribute("Claimed") == true) or (node:GetAttribute("Broken") == true)
+	return (not node.Parent)
+		or (node:GetAttribute("Claimed") == true)
+		or (node:GetAttribute("Broken") == true)
+		or (matKey ~= "" and getRealMatCount(matKey) > matBefore)
 end
 
 local function swingPickaxeAtOre(node, pos, checkRunFn)
@@ -2061,32 +2227,56 @@ local function swingPickaxeAtOre(node, pos, checkRunFn)
 		return false
 	end
 
-	local matBefore = getRealMatCount(tostring(node:GetAttribute("Material") or "Quantum"))
-	for swingIdx = 1, 5 do
+	local pickaxeTool, isEquipped = findExactTool(char, "Pickaxe")
+	if not pickaxeTool then
+		matStatusLabel:Set("Cần craft Pickaxe (8 Scrap) để đào quặng Ore!")
+		Menu:Notify("Auto Loot", "Bạn chưa có Pickaxe để đào quặng OreNode.", 2.2)
+		return false
+	end
+	if not isEquipped then
+		hum:EquipTool(pickaxeTool)
+		task.wait(0.1)
+	end
+
+	local mineEvent = ReplicatedStorage:FindFirstChild("MineEvent")
+	local matId = tostring(getNodeMaterialAttr(node) or "Quantum")
+	local matBefore = getRealMatCount(matId)
+	for swingIdx = 1, 6 do
 		if destroyed or not node.Parent or node:GetAttribute("Broken") == true or node:GetAttribute("Claimed") == true then
 			break
 		end
 		if checkRunFn and not checkRunFn() then
 			break
 		end
+		local livePos = getStreamedPartPosition(node) or pos
 		if teleportToMatEnabled then
-			teleportCharacterTo(pos, Vector3.new(0, 1.5, 2.2))
+			teleportCharacterTo(livePos, Vector3.new(0, 1.8, 2.6), livePos, 1.8)
+		end
+		if pickaxeTool.Parent ~= char and pickaxeTool.Parent == localPlayer:FindFirstChildOfClass("Backpack") then
+			hum:EquipTool(pickaxeTool)
 		end
 		local now = clockNow()
 		if (now - lastPickaxeSwingAt) < 0.78 then
 			task.wait(0.78 - (now - lastPickaxeSwingAt))
 		end
 		lastPickaxeSwingAt = clockNow()
-		equipAndActivateTool(char, hum, "Pickaxe")
-		task.wait(0.25)
-		if getRealMatCount(tostring(node:GetAttribute("Material") or "Quantum")) > matBefore then
+		pcall(function()
+			pickaxeTool:Activate()
+		end)
+		if mineEvent and mineEvent:IsA("RemoteEvent") then
+			pcall(function()
+				mineEvent:FireServer("swing")
+			end)
+		end
+		task.wait(0.3)
+		if not node.Parent or node:GetAttribute("Broken") == true or node:GetAttribute("Claimed") == true then
 			break
 		end
-		if swingIdx < 5 then
-			task.wait(0.55)
+		if swingIdx < 6 then
+			task.wait(0.5)
 		end
 	end
-	return (not node.Parent) or (node:GetAttribute("Broken") == true)
+	return (not node.Parent) or (node:GetAttribute("Broken") == true) or (getRealMatCount(matId) > matBefore)
 end
 
 local function collectMaterialNode(node, pos, isSingleAction, myRunId)
@@ -2108,8 +2298,12 @@ local function collectMaterialNode(node, pos, isSingleAction, myRunId)
 	end
 
 	if teleportToMatEnabled then
-		teleportCharacterTo(pos, Vector3.new(0, 1.8, 0))
-		task.wait(0.06)
+		local jumpDist = (pos - root.Position).Magnitude
+		teleportCharacterTo(pos, Vector3.new(0, 1.8, 1.8), pos, 2.2)
+		task.wait(jumpDist > 10 and 0.35 or 0.14)
+		pcall(function()
+			RunService.Heartbeat:Wait()
+		end)
 	else
 		hum:MoveTo(pos)
 		if isSingleAction then
@@ -2127,9 +2321,10 @@ local function collectMaterialNode(node, pos, isSingleAction, myRunId)
 		return true
 	end
 
+	local matAttr = tostring(getNodeMaterialAttr(node) or "")
 	local isOre = CollectionService:HasTag(node, "OreNode")
 		or node:GetAttribute("Hits") ~= nil
-		or (MATERIAL_BY_ID[tostring(node:GetAttribute("Material") or "")] and MATERIAL_BY_ID[tostring(node:GetAttribute("Material"))].Kind == "Ore")
+		or (MATERIAL_BY_ID[matAttr] and MATERIAL_BY_ID[matAttr].Kind == "Ore")
 	if autoSwingToolEnabled and isOre then
 		swingPickaxeAtOre(node, pos, keepGoing)
 	end
@@ -2138,6 +2333,27 @@ local function collectMaterialNode(node, pos, isSingleAction, myRunId)
 		nodeCooldownUntil[node] = clockNow() + 2.0
 	end
 	return true
+end
+
+local lootEventObj = ReplicatedStorage:FindFirstChild("LootEvent")
+if lootEventObj and lootEventObj:IsA("RemoteEvent") then
+	track(lootEventObj.OnClientEvent:Connect(function(action, chestId)
+		if destroyed or not autoLootChestsEnabled then
+			return
+		end
+		if action == "show" and chestId ~= nil and (autoLootEnabled or clockNow() <= lootChestWindowUntil) then
+			task.spawn(function()
+				task.wait(0.08)
+				pcall(function()
+					lootEventObj:FireServer("take", chestId, "all")
+				end)
+				task.wait(0.1)
+				pcall(function()
+					lootEventObj:FireServer("leave", chestId)
+				end)
+			end)
+		end
+	end))
 end
 
 matTab:AddDropdown({
@@ -2151,7 +2367,7 @@ matTab:AddDropdown({
 		local origin = root and root.Position or Vector3.zero
 		local node, _, dist = findNearestMaterialNode(origin, false)
 		if node then
-			local matId = tostring(node:GetAttribute("Material") or node:GetAttribute("MaterialId") or node.Name)
+			local matId = tostring(getNodeMaterialAttr(node) or node.Name)
 			matStatusLabel:Set(string.format("Tìm thấy %s [%s] (%.0f st)", matId, getNodeDimName(node), dist))
 		else
 			matStatusLabel:Set("Đã chọn: " .. opt .. " (Sẵn sàng TP tới Dim)")
@@ -2178,8 +2394,8 @@ matTab:AddToggle({
 })
 
 matTab:AddToggle({
-	Name = "Auto Instant / Prompt",
-	Description = "Tự giữ ProximityPrompt đủ HoldDuration",
+	Name = "Auto Giữ Prompt",
+	Description = "Giữ đủ HoldDuration + dự phòng fireproximityprompt",
 	Default = true,
 	Callback = function(on)
 		autoPromptEnabled = on
@@ -2187,11 +2403,29 @@ matTab:AddToggle({
 })
 
 matTab:AddToggle({
-	Name = "Tự vung Tool / Pickaxe",
-	Description = "Tự cầm Pickaxe & gõ quặng (OreNode)",
+	Name = "Instant Prompt (Executor)",
+	Description = "Thử kích nổ nhanh fireproximityprompt khi giữ",
+	Default = false,
+	Callback = function(on)
+		instantExecutorPrompt = on
+	end,
+})
+
+matTab:AddToggle({
+	Name = "Tự vung Pickaxe đào Quặng",
+	Description = "Chỉ dùng Pickaxe & gõ quặng (OreNode)",
 	Default = true,
 	Callback = function(on)
 		autoSwingToolEnabled = on
+	end,
+})
+
+matTab:AddToggle({
+	Name = "Auto Mở Rương (LootChests)",
+	Description = "Tự lấy toàn bộ đồ trong rương khi Auto Loot",
+	Default = true,
+	Callback = function(on)
+		autoLootChestsEnabled = on
 	end,
 })
 
@@ -2225,8 +2459,9 @@ matTab:AddButton({
 				Menu:Notify("Auto Loot", "Không tìm thấy node phù hợp đã tải.", 2.2)
 				return
 			end
-			local matId = tostring(node:GetAttribute("Material") or node:GetAttribute("MaterialId") or node.Name)
+			local matId = tostring(getNodeMaterialAttr(node) or node.Name)
 			matStatusLabel:Set(string.format("Đang loot %s [%s] (%.0f st)", matId, getNodeDimName(node), dist))
+			Menu:Notify("Auto Loot", string.format("Đang thu thập %s [%s]", matId, getNodeDimName(node)), 2)
 			collectMaterialNode(node, pos, true, lootRunId)
 		end)
 	end,
@@ -2250,7 +2485,7 @@ local function startAutoLootLoop()
 					end)
 				end
 				if targetObj and targetPos then
-					local matId = tostring(targetObj:GetAttribute("Material") or targetObj:GetAttribute("MaterialId") or targetObj.Name)
+					local matId = tostring(getNodeMaterialAttr(targetObj) or targetObj.Name)
 					matStatusLabel:Set(string.format("Mục tiêu: %s [%s] (%.0f st)", matId, getNodeDimName(targetObj), dist))
 					collectMaterialNode(targetObj, targetPos, false, myRunId)
 				else
@@ -2328,8 +2563,8 @@ matTab:AddButton({
 
 matTab:AddInput({
 	Name = "Folder Tài nguyên",
-	Placeholder = "DroppedLoot, Nodes",
-	Default = "DroppedLoot, Nodes",
+	Placeholder = "DroppedLoot, Nodes, QuestIngredients",
+	Default = "DroppedLoot, Nodes, QuestIngredients",
 	Callback = function(txt)
 		lootFolderNames = txt
 		lastCacheRebuildAt = 0
@@ -2338,8 +2573,8 @@ matTab:AddInput({
 
 matTab:AddInput({
 	Name = "Tag Tài nguyên",
-	Placeholder = "OreNode",
-	Default = "OreNode",
+	Placeholder = "OreNode, QuestIngredient",
+	Default = "OreNode, QuestIngredient",
 	Callback = function(txt)
 		lootTagNames = txt
 		lastCacheRebuildAt = 0
@@ -2466,7 +2701,8 @@ for _, dr in ipairs(DEFAULT_RECIPES) do
 end
 
 local selectedRecipeOption = CRAFT_OPTIONS[1] or "Flashlight"
-local quickCraftMode = "Siêu tốc (Pass 0s)"
+local quickCraftMode = "Tự động (Pass 0s / Chuẩn 6.2s)"
+local hookGameCraftEnabled = true
 local autoTpWorkbench = true
 local craftBatchCount = 1
 local autoCraftAllMode = false
@@ -2486,9 +2722,8 @@ local function invokeCraftRemoteTimeout(actionName, recipeId, timeoutSec)
 		return false, "KHÔNG TÌM THẤY CraftFunction"
 	end
 	local done = false
-	local timedOut = false
 	local okCall, res1, res2 = false, nil, nil
-	local caller = coroutine.running()
+	local startT = clockNow()
 
 	task.spawn(function()
 		local ok, a, b = pcall(function()
@@ -2497,28 +2732,19 @@ local function invokeCraftRemoteTimeout(actionName, recipeId, timeoutSec)
 		if not done then
 			done = true
 			okCall, res1, res2 = ok, a, b
-			if coroutine.status(caller) == "suspended" then
-				task.spawn(caller)
-			end
 		end
 	end)
 
-	task.delay(timeoutSec or 3.5, function()
-		if not done then
+	local limit = timeoutSec or 5.0
+	while not done and (clockNow() - startT) < limit do
+		if destroyed then
 			done = true
-			timedOut = true
-			res1 = false
-			res2 = "SERVER_TIMEOUT"
-			if coroutine.status(caller) == "suspended" then
-				task.spawn(caller)
-			end
+			return false, "CANCELLED"
 		end
-	end)
-
-	if not done then
-		coroutine.yield()
+		task.wait(0.03)
 	end
-	if timedOut then
+	if not done then
+		done = true
 		return false, "SERVER_TIMEOUT"
 	end
 	if not okCall then
@@ -2527,12 +2753,23 @@ local function invokeCraftRemoteTimeout(actionName, recipeId, timeoutSec)
 	return res1 == true, tostring(res2 or (res1 and "OK" or "SERVER_REJECTED"))
 end
 
+local function isQuestRecipeDone(recipeId)
+	if recipeId == "PortalGunBody" then
+		return getRealMatCount("GunBody") >= 1 or localPlayer:GetAttribute("PortalGunLocked") ~= true
+	elseif recipeId == "PortalFluid" then
+		return getRealMatCount("PortalFluid") >= 1 or localPlayer:GetAttribute("PortalGunLocked") ~= true
+	elseif recipeId == "PortalGun" then
+		return localPlayer:GetAttribute("PortalGunLocked") ~= true
+	end
+	return false
+end
+
 local function canCraftRecipeReal(recipe)
 	if not recipe then
 		return false, "CÔNG THỨC KHÔNG TỒN TẠI"
 	end
-	if recipe.Quest and localPlayer:GetAttribute("PortalGunLocked") ~= true then
-		return false, "ĐÃ XONG QUEST PORTAL GUN"
+	if recipe.Quest and isQuestRecipeDone(recipe.Id) then
+		return false, "ĐÃ XONG QUEST NÀY"
 	end
 	local myIQ = getRealIQLevel()
 	if myIQ < (recipe.IQ or 1) then
@@ -2581,47 +2818,27 @@ local function refreshCraftInventoryLabel()
 end
 SharedState.RefreshCraftUi = refreshCraftInventoryLabel
 
-local function moveNearOwnWorkbench()
+local function moveNearOwnWorkbench(forceSyncWait)
 	if not autoTpWorkbench then
-		return
+		return true
 	end
 	local char = localPlayer.Character
 	local root = char and char:FindFirstChild("HumanoidRootPart")
 	if not root then
-		return
+		return false
 	end
-	local targetBenchPos = nil
-	local ownDim = findOwnPlayerDimModel()
-	if ownDim then
-		local wb = ownDim:FindFirstChild("Workbench")
-		local cs = wb and wb:FindFirstChild("CraftStation")
-		if cs and cs:IsA("BasePart") then
-			targetBenchPos = cs.Position
-		else
-			local sp = ownDim:GetAttribute("Spawn")
-			if typeof(sp) == "CFrame" then
-				targetBenchPos = sp.Position
-			elseif typeof(sp) == "Vector3" then
-				targetBenchPos = sp
-			end
-		end
-	end
+	local targetBenchPos = findOwnCraftStationPos()
 	if not targetBenchPos then
-		local bestDist = math.huge
-		for _, d in ipairs(Workspace:GetDescendants()) do
-			if d:IsA("ProximityPrompt") and d.Name == "CraftPrompt" and d.Parent and d.Parent:IsA("BasePart") then
-				local dist = (d.Parent.Position - root.Position).Magnitude
-				if dist < bestDist then
-					bestDist = dist
-					targetBenchPos = d.Parent.Position
-				end
-			end
-		end
+		return true
 	end
-	if targetBenchPos and (targetBenchPos - root.Position).Magnitude > 14 then
-		teleportCharacterTo(targetBenchPos, Vector3.new(0, 2.5, 3))
-		task.wait(0.12)
+	if (targetBenchPos - root.Position).Magnitude > 5.5 or forceSyncWait then
+		teleportCharacterTo(targetBenchPos, Vector3.new(0, 2.2, 2.8), targetBenchPos, 2.2)
+		task.wait(0.4)
+		pcall(function()
+			RunService.Heartbeat:Wait()
+		end)
 	end
+	return true
 end
 
 local function hasGameQuickCraftPass()
@@ -2631,7 +2848,92 @@ local function hasGameQuickCraftPass()
 			return true
 		end
 	end
-	return localPlayer:GetAttribute("Pass_QuickCraft") == true and localPlayer:GetAttribute("PassOff_QuickCraft") ~= true
+	return (localPlayer:GetAttribute("Pass_QuickCraft") == true or localPlayer:GetAttribute("Own_QuickCraft") == true)
+		and localPlayer:GetAttribute("PassOff_QuickCraft") ~= true
+end
+
+local function getCraftServerWaitSeconds()
+	local baseMin = (gameRMShared and tonumber(gameRMShared.CRAFT_MIN_TIME)) or 6
+	if hasGameQuickCraftPass() then
+		return 0
+	end
+	if quickCraftMode == "Ép 0s (Thử Pass)" then
+		return 0
+	end
+	return baseMin + 0.25
+end
+
+local function waitCraftProgress(durationSec, badgeText, targetName, expectedRunId)
+	if durationSec <= 0 then
+		return true
+	end
+	local startWait = clockNow()
+	while (clockNow() - startWait) < durationSec do
+		if destroyed or (expectedRunId and expectedRunId ~= craftRunId) then
+			return false
+		end
+		local alpha = math.clamp((clockNow() - startWait) / durationSec, 0.25, 0.96)
+		local remain = math.max(0, durationSec - (clockNow() - startWait))
+		quickMeter:SetState(badgeText, THEME.Accent, alpha, string.format("Bỏ 3D • Chờ Server %.1fs -> %s", remain, targetName))
+		task.wait(0.08)
+	end
+	return true
+end
+
+local function executeCraftStepRemote(stepId, stepName, expectedRunId)
+	quickMeter:SetState("BEGIN...", THEME.Accent, 0.25, "Gửi beginCraft -> " .. stepName)
+	local okBegin, msgBegin = invokeCraftRemoteTimeout("beginCraft", stepId, 5.0)
+	if not okBegin then
+		local lowBegin = string.lower(msgBegin or "")
+		local distIssue = string.find(lowBegin, "far", 1, true)
+			or string.find(lowBegin, "near", 1, true)
+			or string.find(lowBegin, "close", 1, true)
+			or string.find(lowBegin, "bench", 1, true)
+			or string.find(lowBegin, "station", 1, true)
+			or string.find(lowBegin, "dist", 1, true)
+			or string.find(lowBegin, "range", 1, true)
+			or string.find(lowBegin, "move", 1, true)
+		if distIssue and autoTpWorkbench then
+			quickMeter:SetState("ĐỒNG BỘ TP", THEME.Accent, 0.2, "Chờ đồng bộ Workbench -> thử lại")
+			moveNearOwnWorkbench(true)
+			okBegin, msgBegin = invokeCraftRemoteTimeout("beginCraft", stepId, 5.0)
+		end
+	end
+	if not okBegin then
+		quickMeter:SetState("TỪ CHỐI", THEME.TextSecondary, 0, "beginCraft: " .. msgBegin)
+		return false, msgBegin
+	end
+
+	local waitSec = getCraftServerWaitSeconds()
+	if waitSec > 0 then
+		if not waitCraftProgress(waitSec, "QUICK WAIT", stepName, expectedRunId) then
+			return false, "CANCELLED"
+		end
+	end
+
+	quickMeter:SetState("CRAFTING...", THEME.Accent, 0.9, "Gửi craft -> " .. stepName)
+	local okCraft, msgCraft = invokeCraftRemoteTimeout("craft", stepId, 5.0)
+
+	if not okCraft and waitSec == 0 and msgCraft ~= "SERVER_TIMEOUT" and msgCraft ~= "CANCELLED" then
+		local lowMsg = string.lower(msgCraft or "")
+		local hardBlock = string.find(lowMsg, "iq", 1, true)
+			or string.find(lowMsg, "material", 1, true)
+			or string.find(lowMsg, "already", 1, true)
+			or string.find(lowMsg, "pass", 1, true)
+		if not hardBlock then
+			local baseMin = (gameRMShared and tonumber(gameRMShared.CRAFT_MIN_TIME)) or 6
+			quickMeter:SetState("THỬ 6.2S", THEME.Accent, 0.2, "Server từ chối 0s -> thử lại chuẩn " .. (baseMin + 0.25) .. "s")
+			local okRetryBegin = invokeCraftRemoteTimeout("beginCraft", stepId, 5.0)
+			if okRetryBegin then
+				if not waitCraftProgress(baseMin + 0.25, "AUTO 6.2S", stepName, expectedRunId) then
+					return false, "CANCELLED"
+				end
+				okCraft, msgCraft = invokeCraftRemoteTimeout("craft", stepId, 5.0)
+			end
+		end
+	end
+
+	return okCraft, msgCraft
 end
 
 local function performSingleQuickCraft(recipe, expectedRunId)
@@ -2642,65 +2944,42 @@ local function performSingleQuickCraft(recipe, expectedRunId)
 
 	moveNearOwnWorkbench()
 
-	quickMeter:SetState("BEGIN...", THEME.Accent, 0.25, "Gửi beginCraft -> " .. recipe.DisplayName)
-	local okBegin, msgBegin = invokeCraftRemoteTimeout("beginCraft", recipe.Id, 3.5)
-	if not okBegin then
-		quickMeter:SetState("TỪ CHỐI", THEME.TextSecondary, 0, "beginCraft: " .. msgBegin)
-		return false, msgBegin
-	end
-
-	local minWait = (gameRMShared and tonumber(gameRMShared.CRAFT_MIN_TIME)) or 6
-	local serverPass = hasGameQuickCraftPass()
-	local needTimerWait = (not serverPass) and (quickCraftMode == "Chuẩn Server (6s)")
-
-	if needTimerWait then
-		local startWait = clockNow()
-		while (clockNow() - startWait) < minWait do
+	if recipe.Id == "PortalGun" and localPlayer:GetAttribute("PortalGunLocked") == true then
+		local steps = (gameRMShared and type(gameRMShared.PortalGunSteps) == "table" and gameRMShared.PortalGunSteps)
+			or { "PortalGunBody", "PortalFluid", "PortalGun" }
+		local lastMsg = "OK"
+		for _, stepId in ipairs(steps) do
 			if destroyed or (expectedRunId and expectedRunId ~= craftRunId) then
 				return false, "CANCELLED"
 			end
-			local alpha = math.clamp((clockNow() - startWait) / minWait, 0.25, 0.95)
-			local remain = math.max(0, minWait - (clockNow() - startWait))
-			quickMeter:SetState("CHỜ SERVER", THEME.Accent, alpha, string.format("Quick Wait %.1fs -> %s", remain, recipe.DisplayName))
-			task.wait(0.1)
-		end
-	end
-
-	quickMeter:SetState("CRAFTING...", THEME.Accent, 0.85, "Bỏ mini-game 3D -> craft " .. recipe.DisplayName)
-	local okCraft, msgCraft = invokeCraftRemoteTimeout("craft", recipe.Id, 3.5)
-
-	if not okCraft and not needTimerWait then
-		local lowMsg = string.lower(msgCraft or "")
-		if string.find(lowMsg, "fast", 1, true)
-			or string.find(lowMsg, "wait", 1, true)
-			or string.find(lowMsg, "time", 1, true)
-			or string.find(lowMsg, "soon", 1, true)
-			or string.find(lowMsg, "quick", 1, true)
-		then
-			local waitLeft = math.max(0.5, minWait)
-			local tWait = clockNow()
-			while (clockNow() - tWait) < waitLeft do
-				if destroyed or (expectedRunId and expectedRunId ~= craftRunId) then
-					return false, "CANCELLED"
+			if stepId == "PortalGun" or not isQuestRecipeDone(stepId) then
+				local stepName = (CRAFT_RECIPES_BY_ID[stepId] and CRAFT_RECIPES_BY_ID[stepId].DisplayName) or stepId
+				local okStep, msgStep = executeCraftStepRemote(stepId, stepName, expectedRunId)
+				if not okStep then
+					quickMeter:SetState("LỖI QUEST", THEME.TextSecondary, 0, msgStep)
+					refreshCraftInventoryLabel()
+					return false, msgStep
 				end
-				local alpha = math.clamp((clockNow() - tWait) / waitLeft, 0.3, 0.96)
-				quickMeter:SetState("AUTO 6S", THEME.Accent, alpha, string.format("Server yêu cầu chờ %.1fs...", waitLeft - (clockNow() - tWait)))
-				task.wait(0.1)
+				lastMsg = msgStep
 			end
-			okCraft, msgCraft = invokeCraftRemoteTimeout("craft", recipe.Id, 3.5)
 		end
+		totalCraftedCount = totalCraftedCount + 1
+		quickMeter:SetState("QUICK OK!", THEME.Success, 1, string.format("Xong Portal Gun | Tổng craft: %d", totalCraftedCount))
+		refreshCraftInventoryLabel()
+		return true, lastMsg
 	end
 
-	if okCraft then
+	local okStep, msgStep = executeCraftStepRemote(recipe.Id, recipe.DisplayName, expectedRunId)
+	if okStep then
 		totalCraftedCount = totalCraftedCount + 1
 		quickMeter:SetState("QUICK OK!", THEME.Success, 1, string.format("Xong %s | Tổng craft: %d", recipe.DisplayName, totalCraftedCount))
 		refreshCraftInventoryLabel()
-		return true, msgCraft
+		return true, msgStep
 	end
 
-	quickMeter:SetState("LỖI CRAFT", THEME.TextSecondary, 0, msgCraft)
+	quickMeter:SetState("LỖI CRAFT", THEME.TextSecondary, 0, msgStep)
 	refreshCraftInventoryLabel()
-	return false, msgCraft
+	return false, msgStep
 end
 
 local function executeQuickCraftBatch(desiredCount, expectedRunId, overrideRecipeId)
@@ -2766,6 +3045,88 @@ local function executeQuickCraftAll(expectedRunId)
 	return true, string.format("Quick Craft %d loại (%d ms)", typesDone, ms)
 end
 
+local origAssemblyInvoke = nil
+local assemblyHookActive = false
+local hasGetCallbackValue = (type(getcallbackvalue) == "function")
+
+local function shadowAssemblyHandler(recipeKey)
+	if destroyed or not hookGameCraftEnabled then
+		if origAssemblyInvoke then
+			return origAssemblyInvoke(recipeKey)
+		end
+		return false
+	end
+	assemblyHookActive = true
+	local labelName = (CRAFT_RECIPES_BY_ID[recipeKey] and CRAFT_RECIPES_BY_ID[recipeKey].DisplayName) or tostring(recipeKey or "Item")
+	local waitSec = getCraftServerWaitSeconds()
+	Menu:Notify("Quick Craft Hook", "Đã bỏ minigame 3D -> " .. labelName .. (waitSec > 0 and string.format(" (%.1fs)", waitSec) or " (0s)"), 2.2)
+	if waitSec > 0 then
+		if not waitCraftProgress(waitSec, "HOOK 3D SKIP", labelName, nil) then
+			assemblyHookActive = false
+			return false
+		end
+	else
+		quickMeter:SetState("HOOK 3D SKIP", THEME.Success, 1, "Đã bỏ Minigame 3D -> " .. labelName)
+	end
+	assemblyHookActive = false
+	return true
+end
+
+local function applyCraftAssemblyHook(enableHook)
+	local targetObj = ReplicatedStorage:FindFirstChild("CraftAssembly")
+	if not targetObj or not targetObj:IsA("BindableFunction") then
+		return
+	end
+	if enableHook then
+		if hasGetCallbackValue then
+			local okCb, cb = pcall(getcallbackvalue, targetObj, "OnInvoke")
+			if okCb and type(cb) == "function" and cb ~= shadowAssemblyHandler then
+				origAssemblyInvoke = cb
+			end
+			if okCb and cb == shadowAssemblyHandler then
+				return
+			end
+		end
+		if not assemblyHookActive then
+			targetObj.OnInvoke = shadowAssemblyHandler
+		end
+	elseif origAssemblyInvoke then
+		targetObj.OnInvoke = origAssemblyInvoke
+	end
+end
+
+if hookGameCraftEnabled then
+	applyCraftAssemblyHook(true)
+end
+
+track(ReplicatedStorage.ChildAdded:Connect(function(child)
+	if not destroyed and hookGameCraftEnabled and child.Name == "CraftAssembly" and child:IsA("BindableFunction") then
+		task.delay(0.1, function()
+			if not destroyed and hookGameCraftEnabled then
+				applyCraftAssemblyHook(true)
+			end
+		end)
+	end
+end))
+
+task.spawn(function()
+	for _, d in ipairs({ 0.4, 1.2, 2.5, 5.0 }) do
+		task.wait(d)
+		if destroyed then
+			return
+		end
+		if hookGameCraftEnabled then
+			applyCraftAssemblyHook(true)
+		end
+	end
+	while not destroyed do
+		if hookGameCraftEnabled and not assemblyHookActive then
+			applyCraftAssemblyHook(true)
+		end
+		task.wait(1.5)
+	end
+end)
+
 craftTab:AddDropdown({
 	Name = "Chọn Công thức",
 	Options = CRAFT_OPTIONS,
@@ -2781,8 +3142,8 @@ craftTab:AddDropdown({
 
 craftTab:AddDropdown({
 	Name = "Chế độ Quick Craft",
-	Options = { "Siêu tốc (Pass 0s)", "Chuẩn Server (6s)" },
-	Default = "Siêu tốc (Pass 0s)",
+	Options = { "Tự động (Pass 0s / Chuẩn 6.2s)", "Chuẩn Server (6.2s)", "Ép 0s (Thử Pass)" },
+	Default = "Tự động (Pass 0s / Chuẩn 6.2s)",
 	Callback = function(opt)
 		quickCraftMode = opt
 		craftStatusLabel:Set("Chế độ Quick Craft: " .. opt)
@@ -2790,8 +3151,19 @@ craftTab:AddDropdown({
 })
 
 craftTab:AddToggle({
+	Name = "Hook nút CRAFT Game (Bỏ 3D)",
+	Description = "Bấm CRAFT trên bàn Workbench tự bỏ minigame 3D",
+	Default = true,
+	Callback = function(on)
+		hookGameCraftEnabled = on
+		applyCraftAssemblyHook(on)
+		craftStatusLabel:Set(on and "Đã bật Hook nút CRAFT Workbench (Bỏ 3D)" or "Đã tắt Hook nút CRAFT Game")
+	end,
+})
+
+craftTab:AddToggle({
 	Name = "TP tới Workbench trước khi Craft",
-	Description = "Tự dịch chuyển đứng cạnh bàn Craft khi gọi Server",
+	Description = "Tự dịch chuyển sát CraftStation (< 5.5 st)",
 	Default = true,
 	Callback = function(on)
 		autoTpWorkbench = on
@@ -2816,8 +3188,10 @@ craftTab:AddButton({
 	Callback = function()
 		task.spawn(function()
 			craftStatusLabel:Set("Đang Quick Craft: " .. selectedRecipeOption .. "...")
+			Menu:Notify("Quick Craft", "Đang bắt đầu: " .. selectedRecipeOption, 1.8)
 			local ok, msg = executeQuickCraftBatch(craftBatchCount, nil, nil)
 			craftStatusLabel:Set((ok and "OK: " or "Thông báo: ") .. msg)
+			Menu:Notify(ok and "Quick Craft Xong" or "Quick Craft Lỗi", msg, 2.5)
 		end)
 	end,
 })
@@ -2828,8 +3202,10 @@ craftTab:AddButton({
 	Callback = function()
 		task.spawn(function()
 			craftStatusLabel:Set("Đang quét 34 công thức không Gamepass...")
+			Menu:Notify("Quick Craft", "Đang quét tất cả món đủ đồ...", 2)
 			local ok, msg = executeQuickCraftAll(nil)
 			craftStatusLabel:Set((ok and "OK: " or "Thông báo: ") .. msg)
+			Menu:Notify(ok and "Quick Craft Xong" or "Quick Craft", msg, 2.5)
 		end)
 	end,
 })
@@ -2856,6 +3232,7 @@ autoCraftToggle = craftTab:AddToggle({
 			craftStatusLabel:Set("Auto Quick Craft: Đã dừng")
 			return
 		end
+		Menu:Notify("Quick Craft Loop", autoCraftAllMode and "Đang chạy Auto All..." or ("Đang auto: " .. selectedRecipeOption), 2.2)
 		task.spawn(function()
 			while autoCraftLoop and not destroyed and myId == craftRunId do
 				local ok, msg
@@ -2870,6 +3247,7 @@ autoCraftToggle = craftTab:AddToggle({
 					if autoCraftToggle then
 						autoCraftToggle:Set(false, false)
 					end
+					Menu:Notify("Quick Craft Dừng", msg, 2.5)
 					break
 				end
 				task.wait(ok and 0.15 or 0.9)
@@ -2889,9 +3267,12 @@ craftTab:AddButton({
 			end
 		end
 		if #readyNames > 0 then
-			craftStatusLabel:Set(string.format("Đủ đồ (%d): %s", #readyNames, table.concat(readyNames, ", ")))
+			local summary = string.format("Đủ đồ (%d): %s", #readyNames, table.concat(readyNames, ", "))
+			craftStatusLabel:Set(summary)
+			Menu:Notify("Kiểm tra Craft", string.format("Có %d công thức thường đủ đồ!", #readyNames), 2.5)
 		else
 			craftStatusLabel:Set("Chưa có công thức thường nào đủ IQ & Material.")
+			Menu:Notify("Kiểm tra Craft", "Chưa có món nào đủ IQ & Material.", 2.2)
 		end
 	end,
 })
@@ -2900,6 +3281,8 @@ onMenuDestroy(function()
 	autoCraftLoop = false
 	craftBusy = false
 	craftRunId = craftRunId + 1
+	hookGameCraftEnabled = false
+	applyCraftAssemblyHook(false)
 end)
 end
 
