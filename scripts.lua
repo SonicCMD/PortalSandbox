@@ -868,6 +868,7 @@ function Menu:AddTab(name, iconText)
 	page.ScrollBarImageColor3 = THEME.BorderBright
 	page.CanvasSize = UDim2.new(0, 0, 0, 0)
 	page.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	page.ScrollingDirection = Enum.ScrollingDirection.Y
 	page.Visible = false
 	page.Parent = contentArea
 	addPadding(page, 10, 12, 14, 12)
@@ -1206,7 +1207,7 @@ function Menu:AddTab(name, iconText)
 		addPadding(topBtn, 0, 12, 0, 12)
 
 		local title = Instance.new("TextLabel")
-		title.Size = UDim2.new(0.54, 0, 1, 0)
+		title.Size = UDim2.new(0.45, 0, 1, 0)
 		title.BackgroundTransparency = 1
 		title.Font = Enum.Font.GothamSemibold
 		title.Text = opts.Name
@@ -1217,14 +1218,14 @@ function Menu:AddTab(name, iconText)
 		title.Parent = topBtn
 
 		local currentLbl = Instance.new("TextLabel")
-		currentLbl.Size = UDim2.new(0.46, -18, 1, 0)
+		currentLbl.Size = UDim2.new(0.55, -18, 1, 0)
 		currentLbl.Position = UDim2.new(1, -18, 0, 0)
 		currentLbl.AnchorPoint = Vector2.new(1, 0)
 		currentLbl.BackgroundTransparency = 1
 		currentLbl.Font = Enum.Font.GothamMedium
 		currentLbl.Text = selected
 		currentLbl.TextColor3 = THEME.AccentDim
-		currentLbl.TextSize = 12
+		currentLbl.TextSize = 11
 		currentLbl.TextXAlignment = Enum.TextXAlignment.Right
 		currentLbl.TextTruncate = Enum.TextTruncate.AtEnd
 		currentLbl.Parent = topBtn
@@ -1392,7 +1393,7 @@ function Menu:AddTab(name, iconText)
 		titleLbl.Size = UDim2.new(0.56, 0, 1, 0)
 		titleLbl.BackgroundTransparency = 1
 		titleLbl.Font = Enum.Font.GothamBold
-		titleLbl.Text = (opts and opts.Title) or "MINI-GAME CRAFT"
+		titleLbl.Text = (opts and opts.Title) or "QUICK CRAFT"
 		titleLbl.TextColor3 = THEME.TextPrimary
 		titleLbl.TextSize = 11
 		titleLbl.TextXAlignment = Enum.TextXAlignment.Left
@@ -1423,29 +1424,27 @@ function Menu:AddTab(name, iconText)
 		addStroke(trackBar, THEME.Border, 1, 0.25)
 
 		local zoneFrame = Instance.new("Frame")
-		zoneFrame.Size = UDim2.fromScale(0.24, 1)
-		zoneFrame.Position = UDim2.fromScale(0.38, 0)
+		zoneFrame.Size = UDim2.fromScale(1, 1)
+		zoneFrame.Position = UDim2.fromScale(0, 0)
 		zoneFrame.BackgroundColor3 = THEME.Success
 		zoneFrame.BackgroundTransparency = 0.45
 		zoneFrame.BorderSizePixel = 0
 		zoneFrame.Parent = trackBar
 		addCorner(zoneFrame, 4)
 
-		local needle = Instance.new("Frame")
-		needle.Size = UDim2.new(0, 4, 1, 0)
-		needle.AnchorPoint = Vector2.new(0.5, 0)
-		needle.Position = UDim2.fromScale(0.5, 0)
-		needle.BackgroundColor3 = THEME.Accent
-		needle.BorderSizePixel = 0
-		needle.Parent = trackBar
-		addCorner(needle, 2)
+		local fillBar = Instance.new("Frame")
+		fillBar.Size = UDim2.fromScale(0, 1)
+		fillBar.BackgroundColor3 = THEME.Success
+		fillBar.BorderSizePixel = 0
+		fillBar.Parent = trackBar
+		addCorner(fillBar, 4)
 
 		local detailLbl = Instance.new("TextLabel")
 		detailLbl.Size = UDim2.new(1, 0, 0, 15)
 		detailLbl.Position = UDim2.fromOffset(0, 37)
 		detailLbl.BackgroundTransparency = 1
 		detailLbl.Font = Enum.Font.Gotham
-		detailLbl.Text = "Bước: 0/0 | Pass: 0"
+		detailLbl.Text = "Sẵn sàng Quick Craft | Đã craft: 0"
 		detailLbl.TextColor3 = THEME.TextSecondary
 		detailLbl.TextSize = 11
 		detailLbl.TextXAlignment = Enum.TextXAlignment.Left
@@ -1453,24 +1452,16 @@ function Menu:AddTab(name, iconText)
 		detailLbl.Parent = card
 
 		local ctrl = {}
-		function ctrl:SetState(stateText, color, zoneMin, zoneMax, needleAlpha, detailText)
+		function ctrl:SetState(stateText, color, fillAlpha, detailText)
 			if stateText then
 				stateLbl.Text = stateText
 			end
 			if color then
 				stateLbl.TextColor3 = color
+				fillBar.BackgroundColor3 = color
 			end
-			if zoneMin ~= nil and zoneMax ~= nil then
-				local zMin = math.clamp(zoneMin, 0, 0.9)
-				local zMax = math.clamp(zoneMax, zMin + 0.08, 1)
-				zoneFrame.Position = UDim2.fromScale(zMin, 0)
-				zoneFrame.Size = UDim2.fromScale(zMax - zMin, 1)
-			end
-			if needleAlpha ~= nil then
-				local a = math.clamp(needleAlpha, 0, 1)
-				needle.Position = UDim2.fromScale(a, 0)
-				local inZone = zoneMin ~= nil and zoneMax ~= nil and a >= zoneMin and a <= zoneMax
-				needle.BackgroundColor3 = inZone and THEME.Success or THEME.Accent
+			if fillAlpha ~= nil then
+				fillBar.Size = UDim2.fromScale(math.clamp(fillAlpha, 0, 1), 1)
 			end
 			if detailText then
 				detailLbl.Text = detailText
@@ -1482,32 +1473,41 @@ function Menu:AddTab(name, iconText)
 	return Tab
 end
 
+local gameRMShared = nil
+local rmSharedObj = ReplicatedStorage:FindFirstChild("RMShared")
+if rmSharedObj and rmSharedObj:IsA("ModuleScript") then
+	local okReq, mod = pcall(require, rmSharedObj)
+	if okReq and type(mod) == "table" then
+		gameRMShared = mod
+	end
+end
+
 local MATERIAL_DEFS = {
-	{ Id = "Quantum", Option = "Quantum • Ore", DisplayName = "Quantum Crystal", Kind = "Ore", Reward = 1 },
-	{ Id = "Graviton", Option = "Graviton • Ore", DisplayName = "Graviton Shard", Kind = "Ore", Reward = 1 },
-	{ Id = "Magma", Option = "Magma • Ore", DisplayName = "Molten Core", Kind = "Ore", Reward = 1 },
-	{ Id = "Void", Option = "Void • Ore", DisplayName = "Void Essence", Kind = "Ore", Reward = 1 },
-	{ Id = "Brine", Option = "Brine", DisplayName = "Brine", Kind = "Node", Reward = 1 },
-	{ Id = "Cell", Option = "Cell", DisplayName = "Cell", Kind = "Node", Reward = 1 },
-	{ Id = "Cog", Option = "Cog", DisplayName = "Cog", Kind = "Node", Reward = 1 },
-	{ Id = "DarkMatter", Option = "DarkMatter", DisplayName = "DarkMatter", Kind = "Node", Reward = 1 },
-	{ Id = "Ember", Option = "Ember", DisplayName = "Ember", Kind = "Node", Reward = 1 },
-	{ Id = "Feather", Option = "Feather", DisplayName = "Feather", Kind = "Node", Reward = 1 },
-	{ Id = "Fleeb", Option = "Fleeb", DisplayName = "Fleeb", Kind = "Node", Reward = 1 },
-	{ Id = "Flesh", Option = "Flesh", DisplayName = "Flesh", Kind = "Node", Reward = 1 },
-	{ Id = "Ice", Option = "Ice", DisplayName = "Ice", Kind = "Node", Reward = 1 },
-	{ Id = "Isotope", Option = "Isotope", DisplayName = "Isotope", Kind = "Node", Reward = 1 },
-	{ Id = "Microchip", Option = "Microchip", DisplayName = "Microchip", Kind = "Node", Reward = 1 },
-	{ Id = "Pearl", Option = "Pearl", DisplayName = "Pearl", Kind = "Node", Reward = 1 },
-	{ Id = "Scrap", Option = "Scrap", DisplayName = "Scrap", Kind = "Node", Reward = 2 },
-	{ Id = "Seed", Option = "Seed", DisplayName = "Seed", Kind = "Node", Reward = 1 },
-	{ Id = "Solar", Option = "Solar", DisplayName = "Solar", Kind = "Node", Reward = 1 },
-	{ Id = "Squanch", Option = "Squanch", DisplayName = "Squanch", Kind = "Node", Reward = 1 },
-	{ Id = "Toxin", Option = "Toxin", DisplayName = "Toxin", Kind = "Node", Reward = 1 },
-	{ Id = "Venom", Option = "Venom", DisplayName = "Venom", Kind = "Node", Reward = 1 },
-	{ Id = "GunBody", Option = "GunBody", DisplayName = "GunBody", Kind = "Special", Reward = 1 },
-	{ Id = "PortalFluid", Option = "PortalFluid", DisplayName = "PortalFluid", Kind = "Special", Reward = 1 },
-	{ Id = "Token", Option = "Token", DisplayName = "Token", Kind = "Special", Reward = 1 },
+	{ Id = "Quantum", Option = "Quantum • Ore", DisplayName = "Quantum Crystal", Dim = "CrystalCaverns", Kind = "Ore" },
+	{ Id = "Graviton", Option = "Graviton • Ore", DisplayName = "Graviton Shard", Dim = "GravityIslands", Kind = "Ore" },
+	{ Id = "Magma", Option = "Magma • Ore", DisplayName = "Molten Core", Dim = "VolcanoWorld", Kind = "Ore" },
+	{ Id = "Void", Option = "Void • Ore", DisplayName = "Void Essence", Dim = "TheVoid", Kind = "Ore" },
+	{ Id = "Brine", Option = "Brine", DisplayName = "Pickle Brine", Dim = "PickleSewers", Kind = "Node" },
+	{ Id = "Cell", Option = "Cell", DisplayName = "Blood Cell", Dim = "AnatomyPark", Kind = "Node" },
+	{ Id = "Cog", Option = "Cog", DisplayName = "Golden Cog", Dim = "GearWorld", Kind = "Node" },
+	{ Id = "DarkMatter", Option = "DarkMatter", DisplayName = "Dark Matter", Dim = "Citadel", Kind = "Node" },
+	{ Id = "Ember", Option = "Ember", DisplayName = "Purge Ember", Dim = "PurgePlanet", Kind = "Node" },
+	{ Id = "Feather", Option = "Feather", DisplayName = "Bird Feather", Dim = "BirdWorld", Kind = "Node" },
+	{ Id = "Fleeb", Option = "Fleeb", DisplayName = "Fleeb Juice", Dim = "Froopyland", Kind = "Node" },
+	{ Id = "Flesh", Option = "Flesh", DisplayName = "Cronenberg Flesh", Dim = "Cronenberg", Kind = "Node" },
+	{ Id = "Ice", Option = "Ice", DisplayName = "Frost Crystal", Dim = "IceWorld", Kind = "Node" },
+	{ Id = "Isotope", Option = "Isotope", DisplayName = "Isotope 322", Dim = "Wasteland", Kind = "Node" },
+	{ Id = "Microchip", Option = "Microchip", DisplayName = "Microchip", Dim = "Microverse", Kind = "Node" },
+	{ Id = "Pearl", Option = "Pearl", DisplayName = "Atlantis Pearl", Dim = "Atlantis", Kind = "Node" },
+	{ Id = "Scrap", Option = "Scrap", DisplayName = "Scrap Metal", Dim = "OWN", Kind = "Node" },
+	{ Id = "Seed", Option = "Seed", DisplayName = "Mega Seed", Dim = "Dimension35C", Kind = "Node" },
+	{ Id = "Solar", Option = "Solar", DisplayName = "Solar Shard", Dim = "Gazorpazorp", Kind = "Node" },
+	{ Id = "Squanch", Option = "Squanch", DisplayName = "Squanch Fruit", Dim = "PlanetSquanch", Kind = "Node" },
+	{ Id = "Toxin", Option = "Toxin", DisplayName = "Toxic Sludge", Dim = "ToxicSwamp", Kind = "Node" },
+	{ Id = "Venom", Option = "Venom", DisplayName = "Snake Venom", Dim = "SnakePlanet", Kind = "Node" },
+	{ Id = "GunBody", Option = "GunBody", DisplayName = "Portal Gun Body", Dim = "Workbench", Kind = "Special" },
+	{ Id = "PortalFluid", Option = "PortalFluid", DisplayName = "Portal Fluid", Dim = "Workbench", Kind = "Special" },
+	{ Id = "Token", Option = "Token", DisplayName = "Arcade Token", Dim = "BlipsAndChitz", Kind = "Special" },
 }
 
 local MATERIAL_BY_ID = {}
@@ -1524,9 +1524,7 @@ for _, m in ipairs(MATERIAL_DEFS) do
 end
 
 local SharedState = {
-	LootTotal = 0,
-	LootCounts = {},
-	AddCraftStock = nil,
+	LootSessionCount = 0,
 	RefreshCraftUi = nil,
 	RefreshLootUi = nil,
 }
@@ -1551,30 +1549,45 @@ local function isCharacterPart(obj)
 	return false
 end
 
-local function getWorldPosition(obj)
+local function getRealMatCount(matId)
+	return tonumber(localPlayer:GetAttribute("Mat_" .. matId)) or 0
+end
+
+local function getRealItemCount(recipeId)
+	return tonumber(localPlayer:GetAttribute("Item_" .. recipeId)) or 0
+end
+
+local function getRealIQLevel()
+	return tonumber(localPlayer:GetAttribute("IQLevel")) or 1
+end
+
+local function getStreamedPartPosition(obj)
 	if not obj or not obj.Parent then
-		return nil
+		return nil, nil
 	end
 	if obj:IsA("BasePart") then
-		return obj.Position
+		return obj.Position, obj
 	elseif obj:IsA("Tool") then
 		local handle = obj:FindFirstChild("Handle")
 		if handle and handle:IsA("BasePart") then
-			return handle.Position
+			return handle.Position, handle
 		end
 		local part = obj:FindFirstChildWhichIsA("BasePart", true)
-		return part and part.Position or nil
-	elseif obj:IsA("Model") then
-		local part = obj.PrimaryPart or obj:FindFirstChild("HumanoidRootPart") or obj:FindFirstChildWhichIsA("BasePart", true)
 		if part then
-			return part.Position
+			return part.Position, part
 		end
-		return obj:GetPivot().Position
+		return nil, nil
+	elseif obj:IsA("Model") then
+		local part = obj:FindFirstChild("Core") or obj.PrimaryPart or obj:FindFirstChild("HumanoidRootPart") or obj:FindFirstChildWhichIsA("BasePart", true)
+		if part and part:IsA("BasePart") then
+			return part.Position, part
+		end
+		return nil, nil
 	end
-	return nil
+	return nil, nil
 end
 
-local function teleportCharacterTo(worldPos)
+local function teleportCharacterTo(worldPos, offsetVec)
 	local char = localPlayer.Character
 	local hum = char and char:FindFirstChildOfClass("Humanoid")
 	local root = char and char:FindFirstChild("HumanoidRootPart")
@@ -1583,7 +1596,7 @@ local function teleportCharacterTo(worldPos)
 	end
 	root.AssemblyLinearVelocity = Vector3.zero
 	root.AssemblyAngularVelocity = Vector3.zero
-	char:PivotTo(CFrame.new(worldPos + Vector3.new(0, 4, 0)))
+	char:PivotTo(CFrame.new(worldPos + (offsetVec or Vector3.new(0, 2.2, 0))))
 	return true
 end
 
@@ -1622,7 +1635,67 @@ local function equipAndActivateTool(char, hum, preferredName)
 		pcall(function()
 			equipped:Activate()
 		end)
+		return true
 	end
+	return false
+end
+
+local function findOwnPlayerDimModel()
+	local dims = Workspace:FindFirstChild("Dimensions")
+	if not dims then
+		return nil
+	end
+	local playerDims = ReplicatedStorage:FindFirstChild("PlayerDims")
+	if playerDims then
+		local cfg = playerDims:FindFirstChild("pd_" .. tostring(localPlayer.UserId))
+		if cfg then
+			local code = cfg:GetAttribute("Code")
+			if code then
+				local byCode = dims:FindFirstChild("Dim_" .. tostring(code))
+				if byCode then
+					return byCode
+				end
+			end
+		end
+	end
+	for _, dim in ipairs(dims:GetChildren()) do
+		if dim:GetAttribute("OwnerId") == localPlayer.UserId then
+			return dim
+		end
+	end
+	for _, dim in ipairs(dims:GetChildren()) do
+		if string.sub(dim.Name, 1, 4) == "Dim_" then
+			return dim
+		end
+	end
+	return nil
+end
+
+local function getDimensionTargetPosition(dimName)
+	local dims = Workspace:FindFirstChild("Dimensions")
+	if not dims then
+		return nil
+	end
+	local dimModel = nil
+	if dimName == "OWN" then
+		dimModel = findOwnPlayerDimModel()
+	else
+		dimModel = dims:FindFirstChild(dimName)
+	end
+	if not dimModel then
+		return nil
+	end
+	local spawnAttr = dimModel:GetAttribute("Spawn")
+	if typeof(spawnAttr) == "CFrame" then
+		return spawnAttr.Position
+	elseif typeof(spawnAttr) == "Vector3" then
+		return spawnAttr
+	end
+	local midAttr = dimModel:GetAttribute("Mid")
+	if typeof(midAttr) == "Vector3" then
+		return midAttr + Vector3.new(0, 12, 0)
+	end
+	return nil
 end
 
 do
@@ -1637,53 +1710,43 @@ local autoPromptEnabled = true
 local autoSwingToolEnabled = true
 local includeDimensionsScan = true
 local lootMaxRange = 200
-local lootLoopInterval = 0.22
+local lootLoopInterval = 0.25
 local lootFolderNames = "DroppedLoot, Nodes"
 local lootTagNames = "OreNode"
 local lootRunId = 0
-local lastPromptAt = {}
 local nodeCooldownUntil = {}
 local cachedNodes = {}
 local lastCacheRebuildAt = 0
-local watchedNodes = {}
-local nodeWatchConns = {}
+local lastPickaxeSwingAt = 0
+local activeHoldPrompt = nil
 
 local matStatusLabel = matTab:AddLabel("Sẵn sàng | 25 Material & Dimensions")
-local lootStatsLabel = matTab:AddLabel("Đã thu thập: 0 | Chưa có")
+local lootStatsLabel = matTab:AddLabel("Kho thực: Scrap 0 | Lần nhặt phiên: 0")
 
 local function refreshLootStatsLabel()
-	local topParts = {}
+	local parts = {}
 	for _, m in ipairs(MATERIAL_DEFS) do
-		local c = SharedState.LootCounts[m.Id] or 0
+		local c = getRealMatCount(m.Id)
 		if c > 0 then
-			table.insert(topParts, m.Id .. ":" .. c)
-			if #topParts >= 4 then
+			table.insert(parts, m.Id .. ":" .. c)
+			if #parts >= 4 then
 				break
 			end
 		end
 	end
-	local matSummary = #topParts > 0 and table.concat(topParts, " ") or "Chưa có"
-	lootStatsLabel:Set(string.format("Đã thu thập: %d | %s", SharedState.LootTotal, matSummary))
+	local summary = #parts > 0 and table.concat(parts, " ") or ("Scrap:" .. getRealMatCount("Scrap"))
+	lootStatsLabel:Set(string.format("Kho: %s | Nhặt phiên: %d", summary, SharedState.LootSessionCount))
 end
 SharedState.RefreshLootUi = refreshLootStatsLabel
 
-local function detectObjectMaterialDef(obj)
-	local attrMat = obj:GetAttribute("Material") or obj:GetAttribute("MaterialId")
-	if attrMat then
-		local found = MATERIAL_BY_ID[tostring(attrMat)]
-		if found then
-			return found
-		end
+local function releaseActivePrompt()
+	if activeHoldPrompt then
+		local p = activeHoldPrompt
+		activeHoldPrompt = nil
+		pcall(function()
+			p:InputHoldEnd()
+		end)
 	end
-	local attrText = string.lower(tostring(obj:GetAttribute("Text") or obj:GetAttribute("MaterialName") or ""))
-	local lowerName = string.lower(obj.Name)
-	for _, m in ipairs(MATERIAL_DEFS) do
-		local idLow = string.lower(m.Id)
-		if string.find(lowerName, idLow, 1, true) or string.find(attrText, idLow, 1, true) then
-			return m
-		end
-	end
-	return nil
 end
 
 local function isNodeAvailable(obj)
@@ -1693,12 +1756,29 @@ local function isNodeAvailable(obj)
 	if obj:GetAttribute("Claimed") == true or obj:GetAttribute("Broken") == true or obj:GetAttribute("Disabled") == true then
 		return false
 	end
+	if CollectionService:HasTag(obj, "QuestIngredient") then
+		local ownerId = obj:GetAttribute("OwnerId")
+		if ownerId ~= nil and ownerId ~= localPlayer.UserId then
+			return false
+		end
+	end
+	local owner = obj:GetAttribute("OwnerId")
+	if owner ~= nil and owner ~= localPlayer.UserId then
+		return false
+	end
+	local pos, basePart = getStreamedPartPosition(obj)
+	if not pos or not basePart then
+		return false
+	end
+	if pos.Y < -4000 then
+		return false
+	end
 	return true
 end
 
 local function rebuildMaterialCache(force)
 	local now = clockNow()
-	if not force and (now - lastCacheRebuildAt) < 1.8 and #cachedNodes > 0 then
+	if not force and (now - lastCacheRebuildAt) < 1.5 and #cachedNodes > 0 then
 		return cachedNodes
 	end
 	lastCacheRebuildAt = now
@@ -1817,7 +1897,7 @@ local function findNearestMaterialNode(originPos, useCooldown)
 
 	for _, obj in ipairs(nodes) do
 		if matchMaterialTarget(obj) then
-			local pos = getWorldPosition(obj)
+			local pos = getStreamedPartPosition(obj)
 			if pos then
 				local d = (pos - originPos).Magnitude
 				local onCooldown = useCooldown and nodeCooldownUntil[obj] and nodeCooldownUntil[obj] > now
@@ -1840,98 +1920,176 @@ local function findNearestMaterialNode(originPos, useCooldown)
 	return fallbackObj, fallbackPos, fallbackDist
 end
 
-local function clearNodeWatchers()
-	for _, conn in ipairs(nodeWatchConns) do
-		disconnectSafe(conn)
+local function tryStreamSelectedDimension(originPos, checkRunFn)
+	if not teleportToMatEnabled then
+		return nil
 	end
-	nodeWatchConns = {}
-	watchedNodes = {}
-end
-
-local function watchNodeCollected(node)
-	if watchedNodes[node] or not node or not node.Parent then
-		return
+	local filter = OPTION_TO_FILTER[selectedMatOption]
+	local targetDimName = nil
+	if filter and filter.kind == "Id" then
+		local def = MATERIAL_BY_ID[filter.matId]
+		if def and def.Dim ~= "Workbench" then
+			targetDimName = def.Dim
+		end
+	elseif filter and filter.kind == "Ore" then
+		targetDimName = "CrystalCaverns"
 	end
-	watchedNodes[node] = true
-
-	local matDef = detectObjectMaterialDef(node)
-	local matId = matDef and matDef.Id or tostring(node:GetAttribute("Material") or node:GetAttribute("MaterialId") or "Scrap")
-	local reward = matDef and matDef.Reward or 1
-	local collected = false
-	local localConns = {}
-
-	local function finishWatch(awarded)
-		if collected then
-			return
-		end
-		collected = true
-		watchedNodes[node] = nil
-		for _, c in ipairs(localConns) do
-			disconnectSafe(c)
-		end
-		if awarded and not destroyed then
-			SharedState.LootTotal = SharedState.LootTotal + reward
-			SharedState.LootCounts[matId] = (SharedState.LootCounts[matId] or 0) + reward
-			if SharedState.AddCraftStock then
-				SharedState.AddCraftStock(matId, reward)
+	if not targetDimName then
+		local dims = Workspace:FindFirstChild("Dimensions")
+		if dims and customMatFilter ~= "" then
+			local cLow = string.lower(customMatFilter)
+			for _, d in ipairs(dims:GetChildren()) do
+				if string.find(string.lower(d.Name), cLow, 1, true) then
+					targetDimName = d.Name
+					break
+				end
 			end
-			refreshLootStatsLabel()
-			lastCacheRebuildAt = 0
 		end
 	end
+	if not targetDimName then
+		return nil
+	end
+	local dimPos = getDimensionTargetPosition(targetDimName)
+	if not dimPos then
+		return nil
+	end
+	if (dimPos - originPos).Magnitude > 180 then
+		matStatusLabel:Set("Đang di chuyển tới " .. targetDimName .. " để tải node...")
+		local char = localPlayer.Character
+		local root = char and char:FindFirstChild("HumanoidRootPart")
+		local prevCFrame = root and root.CFrame or nil
+		local wasAnchored = root and root.Anchored or false
 
-	local function checkState()
-		if destroyed or not node.Parent or node:GetAttribute("Claimed") == true or node:GetAttribute("Broken") == true then
-			finishWatch(not destroyed)
+		if root then
+			root.Anchored = true
 		end
-	end
-
-	local c1 = node.AncestryChanged:Connect(checkState)
-	local c2 = node:GetAttributeChangedSignal("Claimed"):Connect(checkState)
-	local c3 = node:GetAttributeChangedSignal("Broken"):Connect(checkState)
-	table.insert(localConns, c1)
-	table.insert(localConns, c2)
-	table.insert(localConns, c3)
-	table.insert(nodeWatchConns, c1)
-	table.insert(nodeWatchConns, c2)
-	table.insert(nodeWatchConns, c3)
-
-	task.delay(6, function()
-		finishWatch(false)
-	end)
-end
-
-local function triggerValidPrompt(targetObj, rootPos)
-	if not autoPromptEnabled or not targetObj then
-		return
-	end
-	local prompt = targetObj:IsA("ProximityPrompt") and targetObj or targetObj:FindFirstChildWhichIsA("ProximityPrompt", true)
-	if not prompt or not prompt.Enabled then
-		return
-	end
-	local now = clockNow()
-	if lastPromptAt[prompt] and (now - lastPromptAt[prompt]) < 0.7 then
-		return
-	end
-	local parentPart = prompt.Parent
-	local promptPos = (parentPart and parentPart:IsA("BasePart")) and parentPart.Position or (getWorldPosition(targetObj) or rootPos)
-	if (promptPos - rootPos).Magnitude <= (prompt.MaxActivationDistance + 2) then
-		lastPromptAt[prompt] = now
+		teleportCharacterTo(dimPos, Vector3.new(0, 4, 0))
 		task.spawn(function()
 			pcall(function()
-				prompt:InputHoldBegin()
-				if prompt.HoldDuration > 0 then
-					task.wait(prompt.HoldDuration + 0.05)
-				else
-					task.wait(0.05)
-				end
-				prompt:InputHoldEnd()
+				localPlayer:RequestStreamAroundAsync(dimPos)
 			end)
 		end)
+
+		local foundObj, foundPos, foundDist = nil, nil, nil
+		for _ = 1, 4 do
+			if destroyed or (checkRunFn and not checkRunFn()) then
+				break
+			end
+			task.wait(0.3)
+			rebuildMaterialCache(true)
+			foundObj, foundPos, foundDist = findNearestMaterialNode(dimPos, false)
+			if foundObj then
+				break
+			end
+		end
+
+		if root and root.Parent then
+			root.AssemblyLinearVelocity = Vector3.zero
+			root.AssemblyAngularVelocity = Vector3.zero
+			root.Anchored = wasAnchored == true
+		end
+		if not foundObj and prevCFrame and char and char.Parent and root and root.Parent then
+			char:PivotTo(prevCFrame)
+		end
+		return foundObj, foundPos, foundDist
 	end
+	return nil
 end
 
-local function collectMaterialNode(node, pos, isSingleAction, fromAutoLoop)
+local function findNodePrompt(node)
+	local core = node:FindFirstChild("Core")
+	if core then
+		local p = core:FindFirstChildWhichIsA("ProximityPrompt")
+		if p and p.Enabled then
+			return p
+		end
+	end
+	local prompt = node:IsA("ProximityPrompt") and node or node:FindFirstChildWhichIsA("ProximityPrompt", true)
+	if prompt and prompt.Enabled then
+		return prompt
+	end
+	return nil
+end
+
+local function holdPromptComplete(prompt, node, checkRunFn)
+	local pParent = prompt.Parent
+	local promptPos = (pParent and pParent:IsA("BasePart")) and pParent.Position or (getStreamedPartPosition(node) or Vector3.zero)
+	local char = localPlayer.Character
+	local root = char and char:FindFirstChild("HumanoidRootPart")
+	if not root then
+		return false
+	end
+
+	if (promptPos - root.Position).Magnitude > (prompt.MaxActivationDistance - 0.6) then
+		if teleportToMatEnabled then
+			teleportCharacterTo(promptPos, Vector3.new(0, 1.8, 0))
+			task.wait(0.06)
+		else
+			return false
+		end
+	end
+
+	activeHoldPrompt = prompt
+	pcall(function()
+		prompt:InputHoldBegin()
+	end)
+
+	local totalHold = math.max(0.08, (prompt.HoldDuration or 0) + 0.16)
+	local deadline = clockNow() + totalHold
+	while clockNow() < deadline do
+		if destroyed or not node.Parent or not prompt.Parent or not prompt.Enabled then
+			break
+		end
+		if node:GetAttribute("Claimed") == true or node:GetAttribute("Broken") == true then
+			break
+		end
+		if checkRunFn and not checkRunFn() then
+			break
+		end
+		task.wait(0.05)
+	end
+
+	releaseActivePrompt()
+	return (not node.Parent) or (node:GetAttribute("Claimed") == true) or (node:GetAttribute("Broken") == true)
+end
+
+local function swingPickaxeAtOre(node, pos, checkRunFn)
+	local char = localPlayer.Character
+	local hum = char and char:FindFirstChildOfClass("Humanoid")
+	local root = char and char:FindFirstChild("HumanoidRootPart")
+	if not hum or not root or hum.Health <= 0 then
+		return false
+	end
+
+	local matBefore = getRealMatCount(tostring(node:GetAttribute("Material") or "Quantum"))
+	for swingIdx = 1, 5 do
+		if destroyed or not node.Parent or node:GetAttribute("Broken") == true or node:GetAttribute("Claimed") == true then
+			break
+		end
+		if checkRunFn and not checkRunFn() then
+			break
+		end
+		if teleportToMatEnabled then
+			teleportCharacterTo(pos, Vector3.new(0, 1.5, 2.2))
+		end
+		local now = clockNow()
+		if (now - lastPickaxeSwingAt) < 0.78 then
+			task.wait(0.78 - (now - lastPickaxeSwingAt))
+		end
+		lastPickaxeSwingAt = clockNow()
+		equipAndActivateTool(char, hum, "Pickaxe")
+		task.wait(0.25)
+		if getRealMatCount(tostring(node:GetAttribute("Material") or "Quantum")) > matBefore then
+			break
+		end
+		if swingIdx < 5 then
+			task.wait(0.55)
+		end
+	end
+	return (not node.Parent) or (node:GetAttribute("Broken") == true)
+end
+
+local function collectMaterialNode(node, pos, isSingleAction, myRunId)
 	if not node or not node.Parent then
 		return false
 	end
@@ -1942,9 +2100,16 @@ local function collectMaterialNode(node, pos, isSingleAction, fromAutoLoop)
 		return false
 	end
 
+	local function keepGoing()
+		if not isSingleAction then
+			return autoLootEnabled and not destroyed and myRunId == lootRunId
+		end
+		return not destroyed
+	end
+
 	if teleportToMatEnabled then
-		teleportCharacterTo(pos)
-		task.wait(0.04)
+		teleportCharacterTo(pos, Vector3.new(0, 1.8, 0))
+		task.wait(0.06)
 	else
 		hum:MoveTo(pos)
 		if isSingleAction then
@@ -1953,21 +2118,24 @@ local function collectMaterialNode(node, pos, isSingleAction, fromAutoLoop)
 		end
 	end
 
-	root = localPlayer.Character and localPlayer.Character:FindFirstChild("HumanoidRootPart")
-	if not root then
-		return false
+	local prompt = autoPromptEnabled and findNodePrompt(node) or nil
+	if prompt then
+		local done = holdPromptComplete(prompt, node, keepGoing)
+		if not done and node.Parent then
+			nodeCooldownUntil[node] = clockNow() + 1.8
+		end
+		return true
 	end
 
-	watchNodeCollected(node)
-
-	if autoSwingToolEnabled and (CollectionService:HasTag(node, "OreNode") or node:GetAttribute("Hits") ~= nil) then
-		equipAndActivateTool(char, hum, "Pickaxe")
+	local isOre = CollectionService:HasTag(node, "OreNode")
+		or node:GetAttribute("Hits") ~= nil
+		or (MATERIAL_BY_ID[tostring(node:GetAttribute("Material") or "")] and MATERIAL_BY_ID[tostring(node:GetAttribute("Material"))].Kind == "Ore")
+	if autoSwingToolEnabled and isOre then
+		swingPickaxeAtOre(node, pos, keepGoing)
 	end
 
-	triggerValidPrompt(node, root.Position)
-
-	if fromAutoLoop and node.Parent then
-		nodeCooldownUntil[node] = clockNow() + 2.2
+	if node.Parent then
+		nodeCooldownUntil[node] = clockNow() + 2.0
 	end
 	return true
 end
@@ -1986,7 +2154,7 @@ matTab:AddDropdown({
 			local matId = tostring(node:GetAttribute("Material") or node:GetAttribute("MaterialId") or node.Name)
 			matStatusLabel:Set(string.format("Tìm thấy %s [%s] (%.0f st)", matId, getNodeDimName(node), dist))
 		else
-			matStatusLabel:Set("Đã chọn: " .. opt .. " (Chưa thấy node)")
+			matStatusLabel:Set("Đã chọn: " .. opt .. " (Sẵn sàng TP tới Dim)")
 		end
 	end,
 })
@@ -2002,7 +2170,7 @@ matTab:AddInput({
 
 matTab:AddToggle({
 	Name = "Teleport (Không giới hạn)",
-	Description = "Dịch chuyển tới Material kể cả khác Dimension",
+	Description = "TP qua Dimension & sát node để nhặt/đào",
 	Default = true,
 	Callback = function(on)
 		teleportToMatEnabled = on
@@ -2011,7 +2179,7 @@ matTab:AddToggle({
 
 matTab:AddToggle({
 	Name = "Auto Instant / Prompt",
-	Description = "Tự kích hoạt ProximityPrompt trên node",
+	Description = "Tự giữ ProximityPrompt đủ HoldDuration",
 	Default = true,
 	Callback = function(on)
 		autoPromptEnabled = on
@@ -2020,7 +2188,7 @@ matTab:AddToggle({
 
 matTab:AddToggle({
 	Name = "Tự vung Tool / Pickaxe",
-	Description = "Tự cầm Pickaxe & gõ khi gặp quặng (OreNode)",
+	Description = "Tự cầm Pickaxe & gõ quặng (OreNode)",
 	Default = true,
 	Callback = function(on)
 		autoSwingToolEnabled = on
@@ -2029,7 +2197,7 @@ matTab:AddToggle({
 
 matTab:AddToggle({
 	Name = "Quét Workspace.Dimensions",
-	Description = "Quét cả Nodes/Ores ở các Dimensions trên map",
+	Description = "Quét cả Nodes/Ores đã stream ở các Dimensions",
 	Default = true,
 	Callback = function(on)
 		includeDimensionsScan = on
@@ -2039,23 +2207,28 @@ matTab:AddToggle({
 
 matTab:AddButton({
 	Name = "Teleport & Loot ngay",
-	Description = "Tìm node gần nhất khớp Material, TP & thu thập",
+	Description = "Tìm node (hoặc TP sang Dim), lại sát & thu thập",
 	Callback = function()
-		local root = localPlayer.Character and localPlayer.Character:FindFirstChild("HumanoidRootPart")
-		if not root then
-			Menu:Notify("Auto Loot", "Đang chờ nhân vật hồi sinh.", 2)
-			return
-		end
-		rebuildMaterialCache(true)
-		local node, pos, dist = findNearestMaterialNode(root.Position, false)
-		if not node or not pos then
-			matStatusLabel:Set("Không tìm thấy node phù hợp!")
-			Menu:Notify("Auto Loot", "Không có node nào khớp lựa chọn.", 2.2)
-			return
-		end
-		local matId = tostring(node:GetAttribute("Material") or node:GetAttribute("MaterialId") or node.Name)
-		matStatusLabel:Set(string.format("Đang tới %s [%s] (%.0f st)", matId, getNodeDimName(node), dist))
-		collectMaterialNode(node, pos, true, false)
+		task.spawn(function()
+			local root = localPlayer.Character and localPlayer.Character:FindFirstChild("HumanoidRootPart")
+			if not root then
+				Menu:Notify("Auto Loot", "Đang chờ nhân vật hồi sinh.", 2)
+				return
+			end
+			rebuildMaterialCache(true)
+			local node, pos, dist = findNearestMaterialNode(root.Position, false)
+			if not node then
+				node, pos, dist = tryStreamSelectedDimension(root.Position)
+			end
+			if not node or not pos then
+				matStatusLabel:Set("Chưa thấy node nào khớp xung quanh!")
+				Menu:Notify("Auto Loot", "Không tìm thấy node phù hợp đã tải.", 2.2)
+				return
+			end
+			local matId = tostring(node:GetAttribute("Material") or node:GetAttribute("MaterialId") or node.Name)
+			matStatusLabel:Set(string.format("Đang loot %s [%s] (%.0f st)", matId, getNodeDimName(node), dist))
+			collectMaterialNode(node, pos, true, lootRunId)
+		end)
 	end,
 })
 
@@ -2071,24 +2244,31 @@ local function startAutoLootLoop()
 			local root = char and char:FindFirstChild("HumanoidRootPart")
 			if hum and root and hum.Health > 0 then
 				local targetObj, targetPos, dist = findNearestMaterialNode(root.Position, true)
+				if not targetObj then
+					targetObj, targetPos, dist = tryStreamSelectedDimension(root.Position, function()
+						return autoLootEnabled and not destroyed and myRunId == lootRunId
+					end)
+				end
 				if targetObj and targetPos then
 					local matId = tostring(targetObj:GetAttribute("Material") or targetObj:GetAttribute("MaterialId") or targetObj.Name)
 					matStatusLabel:Set(string.format("Mục tiêu: %s [%s] (%.0f st)", matId, getNodeDimName(targetObj), dist))
-					collectMaterialNode(targetObj, targetPos, false, true)
+					collectMaterialNode(targetObj, targetPos, false, myRunId)
 				else
-					matStatusLabel:Set("Đang quét... (không thấy node phù hợp)")
+					matStatusLabel:Set("Đang quét... (chờ stream/spawn node)")
+					task.wait(0.4)
 				end
 			else
 				matStatusLabel:Set("Đang chờ nhân vật...")
 			end
 			task.wait(lootLoopInterval)
 		end
+		releaseActivePrompt()
 	end)
 end
 
 matTab:AddToggle({
 	Name = "Bật Auto Material / Loot",
-	Description = "Liên tục tìm, xoay vòng & thu thập Material",
+	Description = "Liên tục tìm, giữ prompt/đào & xoay vòng Material",
 	Default = false,
 	Callback = function(on)
 		autoLootEnabled = on
@@ -2097,6 +2277,7 @@ matTab:AddToggle({
 			Menu:Notify("Auto Loot", "Đang chạy: " .. selectedMatOption, 2.2)
 		else
 			lootRunId = lootRunId + 1
+			releaseActivePrompt()
 			stopCharacterMovement()
 			matStatusLabel:Set("Trạng thái: Đang tắt")
 			Menu:Notify("Auto Loot", "Đã tắt Auto Material / Loot.", 2)
@@ -2108,8 +2289,8 @@ matTab:AddSlider({
 	Name = "Chu kỳ Auto Loot",
 	Min = 0.10,
 	Max = 1.00,
-	Default = 0.22,
-	Step = 0.02,
+	Default = 0.25,
+	Step = 0.05,
 	Suffix = "s",
 	Callback = function(val)
 		lootLoopInterval = val
@@ -2132,7 +2313,7 @@ matTab:AddSection("NGUỒN MAP")
 
 matTab:AddButton({
 	Name = "Quét lại Node trên Map",
-	Description = "Làm mới cache & đếm số node khớp bộ lọc",
+	Description = "Làm mới cache các node đã stream & đếm kết quả",
 	Callback = function()
 		local allNodes = rebuildMaterialCache(true)
 		local matched = 0
@@ -2141,7 +2322,7 @@ matTab:AddButton({
 				matched = matched + 1
 			end
 		end
-		matStatusLabel:Set(string.format("Đã quét: %d khớp (%d tổng node)", matched, #allNodes))
+		matStatusLabel:Set(string.format("Đã tải: %d khớp (%d node đang stream)", matched, #allNodes))
 	end,
 })
 
@@ -2170,218 +2351,450 @@ onMenuDestroy(function()
 		autoLootEnabled = false
 		lootRunId = lootRunId + 1
 	end
+	releaseActivePrompt()
 	stopCharacterMovement()
-	clearNodeWatchers()
-	lastPromptAt = {}
 	nodeCooldownUntil = {}
 	cachedNodes = {}
 end)
 end
 
 do
-local craftTab = Menu:AddTab("Auto Craft", "⚒")
-craftTab:AddSection("AUTO CRAFT & MINI-GAME")
+local craftTab = Menu:AddTab("Quick Craft", "⚒")
+craftTab:AddSection("QUICK CRAFT (NO MINIGAME)")
 
-local CRAFT_MINI_PRESETS = {
-	TimingBar = { Label = "Timing Bar (QTE)", Steps = 4, BaseDuration = 0.84, ZoneMin = 0.40, ZoneMax = 0.60 },
-	SequenceTap = { Label = "Chuỗi Nút (Sequence)", Steps = 3, BaseDuration = 0.60, ZoneMin = 0.35, ZoneMax = 0.65 },
-	HeatGauge = { Label = "Cân Nhiệt (Gauge)", Steps = 3, BaseDuration = 0.72, ZoneMin = 0.30, ZoneMax = 0.70 },
+local DEFAULT_RECIPES = {
+	{ Id = "Flashlight", DisplayName = "Flashlight", IQ = 1, Cost = { Scrap = 3 } },
+	{ Id = "MatFinder", DisplayName = "Material Finder", IQ = 1, Cost = { Scrap = 10 } },
+	{ Id = "Pickaxe", DisplayName = "Pickaxe", IQ = 1, Cost = { Scrap = 8 } },
+	{ Id = "LaserPistol", DisplayName = "Laser Pistol", IQ = 1, Cost = { Scrap = 5, Fleeb = 2 } },
+	{ Id = "Plumbus", DisplayName = "Plumbus", IQ = 1, Cost = { Fleeb = 5, Flesh = 4 } },
+	{ Id = "DarkMatterGrenade", DisplayName = "DarkMatter Grenade", IQ = 3, Cost = { DarkMatter = 6, Scrap = 4 } },
+	{ Id = "MeeseeksBox", DisplayName = "Meeseeks Box", IQ = 5, Cost = { Scrap = 7, Fleeb = 4, Seed = 4 } },
+	{ Id = "SlimeBlaster", DisplayName = "Slime Blaster", IQ = 8, Cost = { Brine = 7, Fleeb = 3, Scrap = 4 } },
+	{ Id = "FreezeRay", DisplayName = "Freeze Ray", IQ = 11, Cost = { Ice = 8, Scrap = 5, Fleeb = 3 } },
+	{ Id = "ShrinkRay", DisplayName = "Shrink Ray", IQ = 14, Cost = { Microchip = 6, Quantum = 3, Scrap = 4 } },
+	{ Id = "TeleportRemote", DisplayName = "Teleport Remote", IQ = 17, Cost = { Void = 6, Microchip = 4 } },
+	{ Id = "FloatBomb", DisplayName = "Float Bomb", IQ = 20, Cost = { Graviton = 5, Ember = 4 } },
+	{ Id = "PlasmaShotgun", DisplayName = "Plasma Shotgun", IQ = 28, Cost = { Isotope = 4, Scrap = 5, Pearl = 2 } },
+	{ Id = "GravityGun", DisplayName = "Gravity Gun", IQ = 32, Cost = { Graviton = 7, Scrap = 5, Microchip = 2 } },
+	{ Id = "TeslaGun", DisplayName = "Tesla Gun", IQ = 36, Cost = { Token = 5, Magma = 4, Scrap = 4 } },
+	{ Id = "SawBoomerang", DisplayName = "Buzzsaw Boomerang", IQ = 40, Cost = { Venom = 5, Scrap = 6, Toxin = 3, Cog = 3 } },
+	{ Id = "MindBlower", DisplayName = "Mind Blower", IQ = 45, Cost = { Squanch = 5, Token = 5, Seed = 3 } },
+	{ Id = "Forcefield", DisplayName = "Forcefield", IQ = 50, Cost = { Quantum = 6, Graviton = 4, Scrap = 6 } },
+	{ Id = "HomingLauncher", DisplayName = "Homing Launcher", IQ = 56, Cost = { Isotope = 5, Cell = 4, Microchip = 3 } },
+	{ Id = "DarkMatterMine", DisplayName = "DarkMatter Mine", IQ = 62, Cost = { Void = 4, DarkMatter = 4, Ember = 4 } },
+	{ Id = "PortalHacker", DisplayName = "Portal Hacker", IQ = 69, Cost = { Microchip = 6, Quantum = 4, Token = 4, Void = 3 } },
+	{ Id = "AkiraPalmLaser", DisplayName = "Akira Palm Laser", IQ = 77, Cost = { Solar = 8, Scrap = 6, DarkMatter = 3 } },
+	{ Id = "MeteorCaller", DisplayName = "Meteor Caller", IQ = 88, Cost = { Pearl = 5, Toxin = 5, Magma = 4 } },
+	{ Id = "TimeStopper", DisplayName = "Time Stopper", IQ = 105, Cost = { Quantum = 5, Void = 5, Token = 3, Cog = 4 } },
+	{ Id = "DeathRay", DisplayName = "Death Ray", IQ = 125, Cost = { Cell = 6, Isotope = 5, Quantum = 4, Void = 3 } },
+	{ Id = "RickPrimeBomb", DisplayName = "Rick Prime Bomb", IQ = 150, Cost = { DarkMatter = 9, Scrap = 7, Flesh = 6, Seed = 4 } },
+	{ Id = "JetPack", DisplayName = "Rocket Boots", IQ = 175, Cost = { Magma = 6, Feather = 4, Scrap = 6 } },
+	{ Id = "ZapperDrone", DisplayName = "Prime Bots", IQ = 190, Cost = { Microchip = 12, Cog = 10, Scrap = 20, Solar = 5 } },
+	{ Id = "FFDeactivator", DisplayName = "FF Deactivator", IQ = 200, Cost = { Microchip = 12, Graviton = 8, DarkMatter = 6, Scrap = 15 } },
+	{ Id = "PlasmaRifle", DisplayName = "Plasma Rifle", IQ = 265, Cost = { Isotope = 12, Quantum = 8, Void = 6, Scrap = 20 } },
+	{ Id = "EvilEyepatch", DisplayName = "Evil Eyepatch", IQ = 385, Cost = { Cog = 40, Microchip = 25, Quantum = 15, DarkMatter = 10 } },
+	{ Id = "PortalGunBody", DisplayName = "Portal Gun Body", IQ = 1, Cost = {}, Quest = true },
+	{ Id = "PortalFluid", DisplayName = "Portal Fluid", IQ = 1, Cost = {}, Quest = true },
+	{ Id = "PortalGun", DisplayName = "Portal Gun", IQ = 1, Cost = {}, Quest = true },
 }
 
-local CRAFT_RECIPES = {
-	{ Id = "Pickaxe", DisplayName = "Pickaxe", CraftTime = 0.8, Yield = 1, Ingredients = { Scrap = 4, Cog = 2 }, MiniKey = "SequenceTap" },
-	{ Id = "Flashlight", DisplayName = "Flashlight", CraftTime = 0.8, Yield = 1, Ingredients = { Scrap = 2, Solar = 1, Microchip = 1 }, MiniKey = "SequenceTap" },
-	{ Id = "MaterialFinder", DisplayName = "Material Finder", CraftTime = 1.2, Yield = 1, Ingredients = { Microchip = 3, Quantum = 2, Scrap = 2 }, MiniKey = "SequenceTap" },
-	{ Id = "TeleportRemote", DisplayName = "Teleport Remote", CraftTime = 1.4, Yield = 1, Ingredients = { Microchip = 3, PortalFluid = 2, Void = 2 }, MiniKey = "TimingBar" },
-	{ Id = "PortalHacker", DisplayName = "Portal Hacker", CraftTime = 1.5, Yield = 1, Ingredients = { Microchip = 4, GunBody = 2, DarkMatter = 2 }, MiniKey = "TimingBar" },
-	{ Id = "PlasmaRifle", DisplayName = "Plasma Rifle", CraftTime = 1.8, Yield = 1, Ingredients = { GunBody = 2, Quantum = 3, Ember = 2, Cog = 2 }, MiniKey = "HeatGauge" },
-	{ Id = "GravityGun", DisplayName = "Gravity Gun", CraftTime = 1.8, Yield = 1, Ingredients = { GunBody = 2, Graviton = 4, Microchip = 3 }, MiniKey = "TimingBar" },
-	{ Id = "DarkMatterGrenade", DisplayName = "DarkMatter Bomb", CraftTime = 1.3, Yield = 1, Ingredients = { DarkMatter = 3, Magma = 2, Scrap = 2 }, MiniKey = "HeatGauge" },
-	{ Id = "FreezeRay", DisplayName = "Freeze Ray", CraftTime = 1.5, Yield = 1, Ingredients = { GunBody = 2, Ice = 4, Pearl = 2 }, MiniKey = "HeatGauge" },
-	{ Id = "TimeStopper", DisplayName = "Time Stopper", CraftTime = 2.0, Yield = 1, Ingredients = { Void = 3, Quantum = 3, Token = 2, Cog = 2 }, MiniKey = "TimingBar" },
+local DISPLAY_OVERRIDES = {
+	DarkMatterGrenade = "DarkMatter Grenade",
+	DarkMatterMine = "DarkMatter Mine",
+	PortalHacker = "Portal Hacker",
+	FFDeactivator = "FF Deactivator",
+	HomingLauncher = "Homing Launcher",
+	EvilEyepatch = "Evil Eyepatch",
+	MatFinder = "Material Finder",
 }
 
+local CRAFT_RECIPES = {}
 local CRAFT_RECIPES_BY_ID = {}
 local CRAFT_OPTIONS = {}
 local OPTION_TO_RECIPE_ID = {}
-local craftStock = {}
 
-for _, m in ipairs(MATERIAL_DEFS) do
-	craftStock[m.Id] = 12
+local function registerRecipe(id, displayName, iq, cost, isQuest)
+	if CRAFT_RECIPES_BY_ID[id] then
+		return
+	end
+	local shortName = DISPLAY_OVERRIDES[id] or displayName or id
+	local entry = {
+		Id = id,
+		DisplayName = shortName,
+		IQ = iq or 1,
+		Cost = cost or {},
+		Quest = isQuest == true,
+	}
+	table.insert(CRAFT_RECIPES, entry)
+	CRAFT_RECIPES_BY_ID[id] = entry
+	table.insert(CRAFT_OPTIONS, shortName)
+	OPTION_TO_RECIPE_ID[shortName] = id
 end
-for _, recipe in ipairs(CRAFT_RECIPES) do
-	CRAFT_RECIPES_BY_ID[recipe.Id] = recipe
-	table.insert(CRAFT_OPTIONS, recipe.DisplayName)
-	OPTION_TO_RECIPE_ID[recipe.DisplayName] = recipe.Id
-	craftStock[recipe.Id] = 0
+
+if gameRMShared and type(gameRMShared.Recipes) == "table" then
+	local ordered = {}
+	if type(gameRMShared.RecipeOrder) == "table" then
+		for _, k in ipairs(gameRMShared.RecipeOrder) do
+			table.insert(ordered, k)
+		end
+	end
+	for k in pairs(gameRMShared.Recipes) do
+		if k ~= "MaterialFinder" and not table.find(ordered, k) then
+			table.insert(ordered, k)
+		end
+	end
+	for _, key in ipairs(ordered) do
+		local r = gameRMShared.Recipes[key]
+		if type(r) == "table" and r.pass == nil then
+			local iq = (type(gameRMShared.iqReq) == "function") and gameRMShared.iqReq(key) or 1
+			local fallbackDef = nil
+			for _, dr in ipairs(DEFAULT_RECIPES) do
+				if dr.Id == key then
+					fallbackDef = dr
+					break
+				end
+			end
+			local cleanTitle = (fallbackDef and fallbackDef.DisplayName) or (type(r.tool) == "string" and r.tool) or tostring(r.name or key)
+			registerRecipe(key, cleanTitle, iq, r.cost or {}, r.quest ~= nil)
+		end
+	end
 end
 
-local CRAFT_MINI_TYPE_MAP = {
-	["Timing Bar"] = "TimingBar",
-	["Chuỗi Nút"] = "SequenceTap",
-	["Cân Nhiệt"] = "HeatGauge",
-}
+for _, dr in ipairs(DEFAULT_RECIPES) do
+	registerRecipe(dr.Id, dr.DisplayName, dr.IQ, dr.Cost, dr.Quest)
+end
 
-local selectedRecipeOption = "Pickaxe"
-local selectedMiniType = "Theo Công thức"
-local craftMiniMode = "Tức thời (0ms)"
-local craftBatchCount = 10
+local selectedRecipeOption = CRAFT_OPTIONS[1] or "Flashlight"
+local quickCraftMode = "Siêu tốc (Pass 0s)"
+local autoTpWorkbench = true
+local craftBatchCount = 1
 local autoCraftAllMode = false
 local autoCraftLoop = false
 local craftBusy = false
-local craftStepBusy = false
 local craftRunId = 0
-local craftMiniCleared = 0
 local totalCraftedCount = 0
 
-local placeCraftFolder = ReplicatedStorage:FindFirstChild("CraftItems")
-local placeCraftCount = placeCraftFolder and #placeCraftFolder:GetChildren() or 0
-local initCraftHint = "Sẵn sàng | " .. EXECUTOR_NAME
-if placeCraftCount > 0 then
-	initCraftHint = initCraftHint .. string.format(" • %d CraftItems", placeCraftCount)
-end
+local placeCraftCount = #CRAFT_RECIPES
+local craftStatusLabel = craftTab:AddLabel(string.format("Sẵn sàng Quick Craft | %d món (trừ Gamepass)", placeCraftCount))
+local craftInvLabel = craftTab:AddLabel("Kho: Đang đồng bộ...")
+local quickMeter = craftTab:AddMiniMeter({ Name = "Craft", Title = "QUICK CRAFT STATUS" })
 
-local craftStatusLabel = craftTab:AddLabel(initCraftHint)
-local craftInvLabel = craftTab:AddLabel("Kho: Đang tải...")
-local craftMiniMeter = craftTab:AddMiniMeter({ Name = "Craft", Title = "MINI-GAME CRAFT" })
-
-local function cloneDict(tbl)
-	local copy = {}
-	for k, v in pairs(tbl) do
-		copy[k] = v
+local function invokeCraftRemoteTimeout(actionName, recipeId, timeoutSec)
+	local craftFn = ReplicatedStorage:FindFirstChild("CraftFunction")
+	if not craftFn or not craftFn:IsA("RemoteFunction") then
+		return false, "KHÔNG TÌM THẤY CraftFunction"
 	end
-	return copy
-end
+	local done = false
+	local timedOut = false
+	local okCall, res1, res2 = false, nil, nil
+	local caller = coroutine.running()
 
-local function resolveMiniPreset(recipe)
-	local key = CRAFT_MINI_TYPE_MAP[selectedMiniType] or (recipe and recipe.MiniKey) or "TimingBar"
-	return CRAFT_MINI_PRESETS[key] or CRAFT_MINI_PRESETS.TimingBar, key
-end
+	task.spawn(function()
+		local ok, a, b = pcall(function()
+			return craftFn:InvokeServer(actionName, recipeId)
+		end)
+		if not done then
+			done = true
+			okCall, res1, res2 = ok, a, b
+			if coroutine.status(caller) == "suspended" then
+				task.spawn(caller)
+			end
+		end
+	end)
 
-local function buildCraftPlan(stockCopy, targetRecipeId, planOut, depth)
-	planOut = planOut or {}
-	depth = depth or 0
-	if depth > 6 then
-		return false, "DEPENDENCY_CYCLE"
+	task.delay(timeoutSec or 3.5, function()
+		if not done then
+			done = true
+			timedOut = true
+			res1 = false
+			res2 = "SERVER_TIMEOUT"
+			if coroutine.status(caller) == "suspended" then
+				task.spawn(caller)
+			end
+		end
+	end)
+
+	if not done then
+		coroutine.yield()
 	end
-	local recipe = CRAFT_RECIPES_BY_ID[targetRecipeId]
+	if timedOut then
+		return false, "SERVER_TIMEOUT"
+	end
+	if not okCall then
+		return false, tostring(res1 or "REMOTE_ERROR")
+	end
+	return res1 == true, tostring(res2 or (res1 and "OK" or "SERVER_REJECTED"))
+end
+
+local function canCraftRecipeReal(recipe)
 	if not recipe then
-		return false, "UNKNOWN_RECIPE"
+		return false, "CÔNG THỨC KHÔNG TỒN TẠI"
 	end
-	for itemId, reqAmt in pairs(recipe.Ingredients) do
-		local have = stockCopy[itemId] or 0
-		if have < reqAmt then
-			local sub = CRAFT_RECIPES_BY_ID[itemId]
-			if not sub then
-				return false, "MISSING_" .. itemId
-			end
-			local times = math.ceil((reqAmt - have) / sub.Yield)
-			for _ = 1, times do
-				local ok, err = buildCraftPlan(stockCopy, itemId, planOut, depth + 1)
-				if not ok then
-					return false, err
-				end
-			end
-		end
-		stockCopy[itemId] = (stockCopy[itemId] or 0) - reqAmt
+	if recipe.Quest and localPlayer:GetAttribute("PortalGunLocked") ~= true then
+		return false, "ĐÃ XONG QUEST PORTAL GUN"
 	end
-	stockCopy[recipe.Id] = (stockCopy[recipe.Id] or 0) + recipe.Yield
-	table.insert(planOut, recipe.Id)
-	return true, planOut
-end
-
-local function buildCraftBatchPlan(stockStart, targetRecipeId, maxItems)
-	local stockCopy = cloneDict(stockStart)
-	local fullPlan = {}
-	local craftedItems = 0
-	local limit = math.clamp(math.floor(maxItems or 1), 1, 500)
-	local lastErr = nil
-
-	for _ = 1, limit do
-		local trial = cloneDict(stockCopy)
-		local itemPlan = {}
-		local ok, err = buildCraftPlan(trial, targetRecipeId, itemPlan)
-		if not ok then
-			lastErr = err
-			break
-		end
-		stockCopy = trial
-		for _, rid in ipairs(itemPlan) do
-			table.insert(fullPlan, rid)
-		end
-		craftedItems = craftedItems + 1
+	local myIQ = getRealIQLevel()
+	if myIQ < (recipe.IQ or 1) then
+		return false, string.format("THIẾU IQ (%d/%d)", myIQ, recipe.IQ or 1)
 	end
-
-	return craftedItems, fullPlan, lastErr
+	for matId, need in pairs(recipe.Cost) do
+		local have = getRealMatCount(matId)
+		if have < need then
+			return false, string.format("THIẾU %s (%d/%d)", matId, have, need)
+		end
+	end
+	return true, "ĐỦ ĐIỀU KIỆN"
 end
 
 local function refreshCraftInventoryLabel()
-	local recipeId = OPTION_TO_RECIPE_ID[selectedRecipeOption] or "Pickaxe"
+	local recipeId = OPTION_TO_RECIPE_ID[selectedRecipeOption] or "Flashlight"
 	local recipe = CRAFT_RECIPES_BY_ID[recipeId]
 	local reqParts = {}
 	if recipe then
 		local keys = {}
-		for matId in pairs(recipe.Ingredients) do
+		for matId in pairs(recipe.Cost) do
 			table.insert(keys, matId)
 		end
 		table.sort(keys)
 		for _, matId in ipairs(keys) do
-			local need = recipe.Ingredients[matId]
-			table.insert(reqParts, string.format("%s:%d/%d", matId, craftStock[matId] or 0, need))
+			local need = recipe.Cost[matId]
+			table.insert(reqParts, string.format("%s:%d/%d", matId, getRealMatCount(matId), need))
 		end
 	end
-	local reqStr = #reqParts > 0 and table.concat(reqParts, " ") or "Không"
+	local reqStr = #reqParts > 0 and table.concat(reqParts, " ") or "Miễn phí"
+	local owned = getRealItemCount(recipeId)
+	local okCond, _ = canCraftRecipeReal(recipe)
+	local tag = okCond and "ĐỦ" or "THIẾU"
 	craftInvLabel:Set(
 		string.format(
-			"%s (%s) • Đã craft:%d | Mini:%d",
+			"%s [%s | IQ %d/%d] (%s) • Có:%d | Crafted:%d",
 			selectedRecipeOption,
+			tag,
+			getRealIQLevel(),
+			recipe and recipe.IQ or 1,
 			reqStr,
-			totalCraftedCount,
-			craftMiniCleared
+			owned,
+			totalCraftedCount
 		)
 	)
 end
 SharedState.RefreshCraftUi = refreshCraftInventoryLabel
-SharedState.AddCraftStock = function(matId, amount)
-	if not matId or matId == "" then
+
+local function moveNearOwnWorkbench()
+	if not autoTpWorkbench then
 		return
 	end
-	craftStock[matId] = (craftStock[matId] or 0) + (tonumber(amount) or 1)
+	local char = localPlayer.Character
+	local root = char and char:FindFirstChild("HumanoidRootPart")
+	if not root then
+		return
+	end
+	local targetBenchPos = nil
+	local ownDim = findOwnPlayerDimModel()
+	if ownDim then
+		local wb = ownDim:FindFirstChild("Workbench")
+		local cs = wb and wb:FindFirstChild("CraftStation")
+		if cs and cs:IsA("BasePart") then
+			targetBenchPos = cs.Position
+		else
+			local sp = ownDim:GetAttribute("Spawn")
+			if typeof(sp) == "CFrame" then
+				targetBenchPos = sp.Position
+			elseif typeof(sp) == "Vector3" then
+				targetBenchPos = sp
+			end
+		end
+	end
+	if not targetBenchPos then
+		local bestDist = math.huge
+		for _, d in ipairs(Workspace:GetDescendants()) do
+			if d:IsA("ProximityPrompt") and d.Name == "CraftPrompt" and d.Parent and d.Parent:IsA("BasePart") then
+				local dist = (d.Parent.Position - root.Position).Magnitude
+				if dist < bestDist then
+					bestDist = dist
+					targetBenchPos = d.Parent.Position
+				end
+			end
+		end
+	end
+	if targetBenchPos and (targetBenchPos - root.Position).Magnitude > 14 then
+		teleportCharacterTo(targetBenchPos, Vector3.new(0, 2.5, 3))
+		task.wait(0.12)
+	end
+end
+
+local function hasGameQuickCraftPass()
+	if gameRMShared and type(gameRMShared.passOn) == "function" then
+		local ok, has = pcall(gameRMShared.passOn, localPlayer, "QuickCraft")
+		if ok and has == true then
+			return true
+		end
+	end
+	return localPlayer:GetAttribute("Pass_QuickCraft") == true and localPlayer:GetAttribute("PassOff_QuickCraft") ~= true
+end
+
+local function performSingleQuickCraft(recipe, expectedRunId)
+	local okCond, condMsg = canCraftRecipeReal(recipe)
+	if not okCond then
+		return false, condMsg
+	end
+
+	moveNearOwnWorkbench()
+
+	quickMeter:SetState("BEGIN...", THEME.Accent, 0.25, "Gửi beginCraft -> " .. recipe.DisplayName)
+	local okBegin, msgBegin = invokeCraftRemoteTimeout("beginCraft", recipe.Id, 3.5)
+	if not okBegin then
+		quickMeter:SetState("TỪ CHỐI", THEME.TextSecondary, 0, "beginCraft: " .. msgBegin)
+		return false, msgBegin
+	end
+
+	local minWait = (gameRMShared and tonumber(gameRMShared.CRAFT_MIN_TIME)) or 6
+	local serverPass = hasGameQuickCraftPass()
+	local needTimerWait = (not serverPass) and (quickCraftMode == "Chuẩn Server (6s)")
+
+	if needTimerWait then
+		local startWait = clockNow()
+		while (clockNow() - startWait) < minWait do
+			if destroyed or (expectedRunId and expectedRunId ~= craftRunId) then
+				return false, "CANCELLED"
+			end
+			local alpha = math.clamp((clockNow() - startWait) / minWait, 0.25, 0.95)
+			local remain = math.max(0, minWait - (clockNow() - startWait))
+			quickMeter:SetState("CHỜ SERVER", THEME.Accent, alpha, string.format("Quick Wait %.1fs -> %s", remain, recipe.DisplayName))
+			task.wait(0.1)
+		end
+	end
+
+	quickMeter:SetState("CRAFTING...", THEME.Accent, 0.85, "Bỏ mini-game 3D -> craft " .. recipe.DisplayName)
+	local okCraft, msgCraft = invokeCraftRemoteTimeout("craft", recipe.Id, 3.5)
+
+	if not okCraft and not needTimerWait then
+		local lowMsg = string.lower(msgCraft or "")
+		if string.find(lowMsg, "fast", 1, true)
+			or string.find(lowMsg, "wait", 1, true)
+			or string.find(lowMsg, "time", 1, true)
+			or string.find(lowMsg, "soon", 1, true)
+			or string.find(lowMsg, "quick", 1, true)
+		then
+			local waitLeft = math.max(0.5, minWait)
+			local tWait = clockNow()
+			while (clockNow() - tWait) < waitLeft do
+				if destroyed or (expectedRunId and expectedRunId ~= craftRunId) then
+					return false, "CANCELLED"
+				end
+				local alpha = math.clamp((clockNow() - tWait) / waitLeft, 0.3, 0.96)
+				quickMeter:SetState("AUTO 6S", THEME.Accent, alpha, string.format("Server yêu cầu chờ %.1fs...", waitLeft - (clockNow() - tWait)))
+				task.wait(0.1)
+			end
+			okCraft, msgCraft = invokeCraftRemoteTimeout("craft", recipe.Id, 3.5)
+		end
+	end
+
+	if okCraft then
+		totalCraftedCount = totalCraftedCount + 1
+		quickMeter:SetState("QUICK OK!", THEME.Success, 1, string.format("Xong %s | Tổng craft: %d", recipe.DisplayName, totalCraftedCount))
+		refreshCraftInventoryLabel()
+		return true, msgCraft
+	end
+
+	quickMeter:SetState("LỖI CRAFT", THEME.TextSecondary, 0, msgCraft)
 	refreshCraftInventoryLabel()
+	return false, msgCraft
+end
+
+local function executeQuickCraftBatch(desiredCount, expectedRunId, overrideRecipeId)
+	if craftBusy then
+		return false, "ĐANG CRAFT..."
+	end
+	craftBusy = true
+
+	local recipeId = overrideRecipeId or OPTION_TO_RECIPE_ID[selectedRecipeOption] or "Flashlight"
+	local recipe = CRAFT_RECIPES_BY_ID[recipeId]
+	local t0 = clockNow()
+	local doneCount = 0
+	local lastErr = nil
+
+	for _ = 1, math.clamp(math.floor(desiredCount or 1), 1, 100) do
+		if destroyed or (expectedRunId and expectedRunId ~= craftRunId) then
+			craftBusy = false
+			return false, "ĐÃ HỦY"
+		end
+		local okOne, msgOne = performSingleQuickCraft(recipe, expectedRunId)
+		if not okOne then
+			lastErr = msgOne
+			break
+		end
+		doneCount = doneCount + 1
+		task.wait(0.05)
+	end
+
+	craftBusy = false
+	refreshCraftInventoryLabel()
+	if doneCount == 0 then
+		return false, tostring(lastErr or "KHÔNG THỂ CRAFT")
+	end
+	local ms = math.max(1, math.round((clockNow() - t0) * 1000))
+	return true, string.format("Quick Craft xong %dx %s (%d ms)", doneCount, recipe.DisplayName, ms)
+end
+
+local function executeQuickCraftAll(expectedRunId)
+	local typesDone = 0
+	local lastErr = nil
+	local t0 = clockNow()
+	for _, recipe in ipairs(CRAFT_RECIPES) do
+		if destroyed or (expectedRunId and expectedRunId ~= craftRunId) then
+			break
+		end
+		local okCond = canCraftRecipeReal(recipe)
+		if okCond then
+			local okBatch, errBatch = executeQuickCraftBatch(craftBatchCount, expectedRunId, recipe.Id)
+			if okBatch then
+				typesDone = typesDone + 1
+			else
+				lastErr = errBatch
+				if errBatch == "SERVER_TIMEOUT" or errBatch == "KHÔNG TÌM THẤY CraftFunction" then
+					return false, errBatch
+				end
+			end
+		end
+	end
+	if typesDone == 0 then
+		return false, lastErr or "CHƯA CÓ MÓN NÀO ĐỦ IQ & MATERIAL"
+	end
+	local ms = math.max(1, math.round((clockNow() - t0) * 1000))
+	return true, string.format("Quick Craft %d loại (%d ms)", typesDone, ms)
 end
 
 craftTab:AddDropdown({
 	Name = "Chọn Công thức",
 	Options = CRAFT_OPTIONS,
-	Default = "Pickaxe",
+	Default = selectedRecipeOption,
 	Callback = function(opt)
 		selectedRecipeOption = opt
-		local r = CRAFT_RECIPES_BY_ID[OPTION_TO_RECIPE_ID[opt] or "Pickaxe"]
-		local preset = resolveMiniPreset(r)
-		craftMiniMeter:SetState("SẴN SÀNG", THEME.AccentDim, preset.ZoneMin, preset.ZoneMax, 0.5, preset.Label .. " | Pass: " .. craftMiniCleared)
+		local r = CRAFT_RECIPES_BY_ID[OPTION_TO_RECIPE_ID[opt] or "Flashlight"]
+		local okCond, condMsg = canCraftRecipeReal(r)
+		quickMeter:SetState(okCond and "ĐỦ ĐỒ" or "CHỜ ĐỒ", okCond and THEME.Success or THEME.AccentDim, okCond and 1 or 0, condMsg .. " | Crafted: " .. totalCraftedCount)
 		refreshCraftInventoryLabel()
 	end,
 })
 
 craftTab:AddDropdown({
-	Name = "Kiểu Mini Craft",
-	Options = { "Theo Công thức", "Timing Bar", "Chuỗi Nút", "Cân Nhiệt" },
-	Default = "Theo Công thức",
+	Name = "Chế độ Quick Craft",
+	Options = { "Siêu tốc (Pass 0s)", "Chuẩn Server (6s)" },
+	Default = "Siêu tốc (Pass 0s)",
 	Callback = function(opt)
-		selectedMiniType = opt
-		local r = CRAFT_RECIPES_BY_ID[OPTION_TO_RECIPE_ID[selectedRecipeOption] or "Pickaxe"]
-		local preset = resolveMiniPreset(r)
-		craftMiniMeter:SetState("SẴN SÀNG", THEME.AccentDim, preset.ZoneMin, preset.ZoneMax, 0.5, preset.Label .. " | Pass: " .. craftMiniCleared)
+		quickCraftMode = opt
+		craftStatusLabel:Set("Chế độ Quick Craft: " .. opt)
 	end,
 })
 
-craftTab:AddDropdown({
-	Name = "Chế độ Mini Craft",
-	Options = { "Tức thời (0ms)", "Auto (<0.25s)", "Thường (Gốc)" },
-	Default = "Tức thời (0ms)",
-	Callback = function(opt)
-		craftMiniMode = opt
-		craftStatusLabel:Set("Chế độ Mini Craft: " .. opt)
+craftTab:AddToggle({
+	Name = "TP tới Workbench trước khi Craft",
+	Description = "Tự dịch chuyển đứng cạnh bàn Craft khi gọi Server",
+	Default = true,
+	Callback = function(on)
+		autoTpWorkbench = on
 	end,
 })
 
@@ -2389,7 +2802,7 @@ craftTab:AddSlider({
 	Name = "Số lượng / lần bấm",
 	Min = 1,
 	Max = 50,
-	Default = 10,
+	Default = 1,
 	Step = 1,
 	Suffix = "x",
 	Callback = function(val)
@@ -2397,213 +2810,33 @@ craftTab:AddSlider({
 	end,
 })
 
-local function runCraftMiniGame(recipe, mode, showUi, expectedRunId)
-	local preset = resolveMiniPreset(recipe)
-	local steps = preset.Steps
-	local zoneMid = (preset.ZoneMin + preset.ZoneMax) * 0.5
-
-	if mode == "Tức thời (0ms)" then
-		craftMiniCleared = craftMiniCleared + 1
-		if showUi then
-			craftMiniMeter:SetState(
-				"TỨC THỜI OK",
-				THEME.Success,
-				preset.ZoneMin,
-				preset.ZoneMax,
-				zoneMid,
-				string.format("%s (%d/%d) | Pass: %d", preset.Label, steps, steps, craftMiniCleared)
-			)
-		end
-		return true
-	end
-
-	local isFastAuto = (mode == "Auto (<0.25s)")
-	local perStepWait = isFastAuto and 0.025 or (preset.BaseDuration / steps)
-
-	for stepIdx = 1, steps do
-		if destroyed or (expectedRunId and expectedRunId ~= craftRunId) then
-			return false, "CANCELLED"
-		end
-		if showUi then
-			local startAlpha = ((stepIdx % 2) == 1) and 0.14 or 0.86
-			craftMiniMeter:SetState(
-				isFastAuto and "AUTO GIẢI..." or "ĐANG RÈN...",
-				THEME.Accent,
-				preset.ZoneMin,
-				preset.ZoneMax,
-				startAlpha,
-				string.format("%s (%d/%d) | Canh vùng...", preset.Label, stepIdx, steps)
-			)
-			task.wait(perStepWait * 0.45)
-			if destroyed or (expectedRunId and expectedRunId ~= craftRunId) then
-				return false, "CANCELLED"
-			end
-			craftMiniMeter:SetState(
-				isFastAuto and "AUTO HIT!" or "ĐÚNG VÙNG",
-				THEME.Success,
-				preset.ZoneMin,
-				preset.ZoneMax,
-				zoneMid,
-				string.format("%s (%d/%d) | Khớp tâm!", preset.Label, stepIdx, steps)
-			)
-			task.wait(perStepWait * 0.55)
-		else
-			task.wait(perStepWait)
-		end
-	end
-
-	craftMiniCleared = craftMiniCleared + 1
-	if showUi then
-		craftMiniMeter:SetState(
-			isFastAuto and "AUTO PASS" or "XONG (GỐC)",
-			THEME.Success,
-			preset.ZoneMin,
-			preset.ZoneMax,
-			zoneMid,
-			string.format("%s (%d/%d) | Pass: %d", preset.Label, steps, steps, craftMiniCleared)
-		)
-	end
-	return true
-end
-
-local function executeCraftStep(recipeId, mode, showUi, expectedRunId)
-	if craftStepBusy then
-		return false, "CRAFT_BUSY"
-	end
-	local recipe = CRAFT_RECIPES_BY_ID[recipeId]
-	if not recipe then
-		return false, "INVALID_RECIPE"
-	end
-	craftStepBusy = true
-	local ok, reason = pcall(function()
-		for itemId, reqAmt in pairs(recipe.Ingredients) do
-			if (craftStock[itemId] or 0) < reqAmt then
-				error("INSUFFICIENT_" .. itemId, 0)
-			end
-		end
-		local mgOk, mgErr = runCraftMiniGame(recipe, mode, showUi, expectedRunId)
-		if not mgOk then
-			error(tostring(mgErr or "MINIGAME_CANCELLED"), 0)
-		end
-		if mode == "Thường (Gốc)" and recipe.CraftTime > 0 then
-			task.wait(recipe.CraftTime)
-		end
-		for itemId, reqAmt in pairs(recipe.Ingredients) do
-			craftStock[itemId] = craftStock[itemId] - reqAmt
-		end
-		craftStock[recipe.Id] = (craftStock[recipe.Id] or 0) + recipe.Yield
-	end)
-	craftStepBusy = false
-	if ok then
-		return true, "OK"
-	end
-	return false, tostring(reason)
-end
-
-local function executeCraftBatch(desiredCount, expectedRunId, overrideRecipeId)
-	if craftBusy then
-		return false, "CRAFT_ALREADY_RUNNING"
-	end
-	craftBusy = true
-
-	local recipeId = overrideRecipeId or OPTION_TO_RECIPE_ID[selectedRecipeOption] or "Pickaxe"
-	local recipeObj = CRAFT_RECIPES_BY_ID[recipeId]
-	local recipeLabel = recipeObj and recipeObj.DisplayName or selectedRecipeOption
-	local targetItems, fullPlan, planErr = buildCraftBatchPlan(craftStock, recipeId, desiredCount)
-	if targetItems == 0 or #fullPlan == 0 then
-		craftBusy = false
-		return false, tostring(planErr or "INSUFFICIENT_MATERIALS")
-	end
-
-	local activeMode = craftMiniMode
-	local t0 = clockNow()
-	local stepCount = 0
-	local totalSteps = #fullPlan
-	local isInstant = (activeMode == "Tức thời (0ms)")
-
-	for i, stepRecipeId in ipairs(fullPlan) do
-		if destroyed or (expectedRunId and expectedRunId ~= craftRunId) then
-			craftBusy = false
-			return false, "CANCELLED"
-		end
-		local showUi = (not isInstant) or (i == totalSteps)
-		local okStep, errStep = executeCraftStep(stepRecipeId, activeMode, showUi, expectedRunId)
-		if not okStep then
-			craftBusy = false
-			refreshCraftInventoryLabel()
-			return false, errStep
-		end
-		if isInstant and (i % 64 == 0) then
-			RunService.Heartbeat:Wait()
-		end
-		stepCount = stepCount + 1
-	end
-
-	totalCraftedCount = totalCraftedCount + targetItems
-	craftBusy = false
-	local elapsedMs = math.max(1, math.round((clockNow() - t0) * 1000))
-	refreshCraftInventoryLabel()
-	return true, string.format("Xong %dx %s (%d bước, %d ms)", targetItems, recipeLabel, stepCount, elapsedMs)
-end
-
-local function executeCraftAllAvailable(expectedRunId)
-	local itemsDone = 0
-	local t0 = clockNow()
-	for _, recipe in ipairs(CRAFT_RECIPES) do
-		if destroyed or (expectedRunId and expectedRunId ~= craftRunId) then
-			break
-		end
-		local ok = executeCraftBatch(craftBatchCount, expectedRunId, recipe.Id)
-		if ok then
-			itemsDone = itemsDone + 1
-		end
-	end
-	if itemsDone == 0 then
-		return false, "KHÔNG ĐỦ NGUYÊN LIỆU"
-	end
-	local ms = math.max(1, math.round((clockNow() - t0) * 1000))
-	return true, string.format("Đã craft %d loại công thức (%d ms)", itemsDone, ms)
-end
-
 craftTab:AddButton({
-	Name = "Craft Ngay + Auto Mini",
-	Description = "Craft SL đã chọn & tự giải mini-game",
+	Name = "Quick Craft Ngay",
+	Description = "Gửi Server craft món đang chọn & bỏ mini-game 3D",
 	Callback = function()
 		task.spawn(function()
-			craftStatusLabel:Set(string.format("Đang craft %dx %s (%s)...", craftBatchCount, selectedRecipeOption, craftMiniMode))
-			local ok, msg = executeCraftBatch(craftBatchCount, nil, nil)
-			craftStatusLabel:Set((ok and "OK: " or "Lỗi: ") .. msg)
+			craftStatusLabel:Set("Đang Quick Craft: " .. selectedRecipeOption .. "...")
+			local ok, msg = executeQuickCraftBatch(craftBatchCount, nil, nil)
+			craftStatusLabel:Set((ok and "OK: " or "Thông báo: ") .. msg)
 		end)
 	end,
 })
 
 craftTab:AddButton({
-	Name = "Craft Tối Đa (Max Kho)",
-	Description = "Ghép hết kho item đang chọn tức thời",
+	Name = "Quick Craft Tất Cả Đủ Đồ",
+	Description = "Quét 34 công thức thường (trừ Gamepass) & craft ngay",
 	Callback = function()
 		task.spawn(function()
-			craftStatusLabel:Set("Đang craft tối đa & giải mini...")
-			local ok, msg = executeCraftBatch(500, nil, nil)
-			craftStatusLabel:Set((ok and "Max OK: " or "Lỗi: ") .. msg)
-		end)
-	end,
-})
-
-craftTab:AddButton({
-	Name = "Craft Tất Cả Đủ Đồ",
-	Description = "Quét 10 công thức & craft mọi món đủ kho",
-	Callback = function()
-		task.spawn(function()
-			craftStatusLabel:Set("Đang craft hàng loạt mọi món đủ đồ...")
-			local ok, msg = executeCraftAllAvailable(nil)
-			craftStatusLabel:Set((ok and "All OK: " or "Dừng: ") .. msg)
+			craftStatusLabel:Set("Đang quét 34 công thức không Gamepass...")
+			local ok, msg = executeQuickCraftAll(nil)
+			craftStatusLabel:Set((ok and "OK: " or "Thông báo: ") .. msg)
 		end)
 	end,
 })
 
 craftTab:AddToggle({
-	Name = "Auto Craft mọi món đủ đồ",
-	Description = "Bật để Auto Loop quét cả 10 công thức",
+	Name = "Auto Quick Craft mọi món đủ đồ",
+	Description = "Khi bật Loop sẽ quét tất cả công thức hợp lệ",
 	Default = false,
 	Callback = function(on)
 		autoCraftAllMode = on
@@ -2612,79 +2845,94 @@ craftTab:AddToggle({
 
 local autoCraftToggle
 autoCraftToggle = craftTab:AddToggle({
-	Name = "Bật Auto Craft Loop",
-	Description = "Lặp tự động craft + mini khi còn đồ",
+	Name = "Bật Auto Quick Craft Loop",
+	Description = "Tự động Quick Craft liên tục khi đủ Material & IQ",
 	Default = false,
 	Callback = function(on)
 		autoCraftLoop = on
 		craftRunId = craftRunId + 1
 		local myId = craftRunId
 		if not on then
-			craftStatusLabel:Set("Auto Craft: Đã dừng")
+			craftStatusLabel:Set("Auto Quick Craft: Đã dừng")
 			return
 		end
 		task.spawn(function()
 			while autoCraftLoop and not destroyed and myId == craftRunId do
 				local ok, msg
 				if autoCraftAllMode then
-					ok, msg = executeCraftAllAvailable(myId)
+					ok, msg = executeQuickCraftAll(myId)
 				else
-					ok, msg = executeCraftBatch(craftBatchCount, myId, nil)
+					ok, msg = executeQuickCraftBatch(craftBatchCount, myId, nil)
 				end
 				craftStatusLabel:Set((ok and "Auto OK: " or "Dừng: ") .. msg)
-				if not ok then
+				if not ok and (msg == "SERVER_TIMEOUT" or msg == "KHÔNG TÌM THẤY CraftFunction") then
 					autoCraftLoop = false
 					if autoCraftToggle then
 						autoCraftToggle:Set(false, false)
 					end
 					break
 				end
-				RunService.Heartbeat:Wait()
+				task.wait(ok and 0.15 or 0.9)
 			end
 		end)
 	end,
 })
 
 craftTab:AddButton({
-	Name = "Test Nhanh 1 Mini Craft",
-	Description = "Chạy thử 1 mini-game của công thức",
+	Name = "Kiểm tra món đủ đồ ngay",
+	Description = "Liệt kê những công thức thường đang đủ IQ & Material",
 	Callback = function()
-		if craftBusy then
-			craftStatusLabel:Set("Đang chạy Craft/Mini-Game...")
-			return
+		local readyNames = {}
+		for _, recipe in ipairs(CRAFT_RECIPES) do
+			if canCraftRecipeReal(recipe) then
+				table.insert(readyNames, recipe.DisplayName)
+			end
 		end
-		task.spawn(function()
-			craftBusy = true
-			local recipe = CRAFT_RECIPES_BY_ID[OPTION_TO_RECIPE_ID[selectedRecipeOption] or "Pickaxe"]
-			local t0 = clockNow()
-			local ok = runCraftMiniGame(recipe, craftMiniMode, true, nil)
-			craftBusy = false
-			refreshCraftInventoryLabel()
-			local ms = math.max(1, math.round((clockNow() - t0) * 1000))
-			craftStatusLabel:Set(ok and string.format("Mini OK (%s, %d ms)", craftMiniMode, ms) or "Đã hủy Mini-Game")
-		end)
-	end,
-})
-
-craftTab:AddButton({
-	Name = "Nạp Material (+25)",
-	Description = "+25 cho toàn bộ 25 Material",
-	Callback = function()
-		for _, m in ipairs(MATERIAL_DEFS) do
-			craftStock[m.Id] = (craftStock[m.Id] or 0) + 25
+		if #readyNames > 0 then
+			craftStatusLabel:Set(string.format("Đủ đồ (%d): %s", #readyNames, table.concat(readyNames, ", ")))
+		else
+			craftStatusLabel:Set("Chưa có công thức thường nào đủ IQ & Material.")
 		end
-		refreshCraftInventoryLabel()
-		craftStatusLabel:Set("Đã nạp +25 cho toàn bộ 25 Material!")
 	end,
 })
 
 onMenuDestroy(function()
 	autoCraftLoop = false
 	craftBusy = false
-	craftStepBusy = false
 	craftRunId = craftRunId + 1
 end)
 end
+
+local lastMatCounts = {}
+for attrName, attrVal in pairs(localPlayer:GetAttributes()) do
+	if string.sub(attrName, 1, 4) == "Mat_" then
+		lastMatCounts[attrName] = tonumber(attrVal) or 0
+	end
+end
+
+track(localPlayer.AttributeChanged:Connect(function(attrName)
+	if destroyed then
+		return
+	end
+	if string.sub(attrName, 1, 4) == "Mat_" then
+		local prevVal = lastMatCounts[attrName] or 0
+		local newVal = tonumber(localPlayer:GetAttribute(attrName)) or 0
+		lastMatCounts[attrName] = newVal
+		if newVal > prevVal then
+			SharedState.LootSessionCount = SharedState.LootSessionCount + 1
+		end
+		if SharedState.RefreshLootUi then
+			SharedState.RefreshLootUi()
+		end
+		if SharedState.RefreshCraftUi then
+			SharedState.RefreshCraftUi()
+		end
+	elseif attrName == "IQLevel" or string.sub(attrName, 1, 5) == "Item_" or attrName == "PortalGunLocked" then
+		if SharedState.RefreshCraftUi then
+			SharedState.RefreshCraftUi()
+		end
+	end
+end))
 
 task.defer(function()
 	if SharedState.RefreshCraftUi then
@@ -2695,4 +2943,4 @@ task.defer(function()
 	end
 end)
 
-Menu:Notify("Shadow Menu", "Auto Loot & Auto Craft sẵn sàng trên " .. (UserInputService.TouchEnabled and "Mobile" or "PC") .. "!", 3)
+Menu:Notify("Shadow Menu", "Auto Loot & Quick Craft (" .. (UserInputService.TouchEnabled and "Mobile" or "PC") .. ") sẵn sàng!", 3)
