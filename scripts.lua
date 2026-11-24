@@ -1241,11 +1241,11 @@ function Menu:AddTab(name, iconText)
 		chevron.TextSize = 14
 		chevron.Parent = topBtn
 
-		local useScrollBox = (#options > 5)
+		local useScrollBox = (#options > 5) or (opts.Dynamic == true)
 		local listBox = Instance.new(useScrollBox and "ScrollingFrame" or "Frame")
 		listBox.LayoutOrder = 2
 		if useScrollBox then
-			listBox.Size = UDim2.new(1, 0, 0, 196)
+			listBox.Size = UDim2.new(1, 0, 0, opts.Dynamic and 168 or 196)
 			listBox.CanvasSize = UDim2.new(0, 0, 0, 0)
 			listBox.AutomaticCanvasSize = Enum.AutomaticSize.Y
 			listBox.ScrollingDirection = Enum.ScrollingDirection.Y
@@ -1284,30 +1284,40 @@ function Menu:AddTab(name, iconText)
 			end
 		end
 
-		for i, opt in ipairs(options) do
-			local ob = Instance.new("TextButton")
-			ob.LayoutOrder = i
-			ob.Size = UDim2.new(1, 0, 0, 36)
-			ob.BackgroundColor3 = THEME.BgCard
-			ob.Font = Enum.Font.GothamMedium
-			ob.Text = opt
-			ob.TextColor3 = THEME.TextSecondary
-			ob.TextSize = 12
-			ob.TextXAlignment = Enum.TextXAlignment.Left
-			ob.AutoButtonColor = false
-			ob.Parent = listBox
-			addCorner(ob, 7)
-			addPadding(ob, 0, 10, 0, 10)
-			optionButtons[opt] = ob
+		local function rebuildOptions(newOptions)
+			for _, child in ipairs(listBox:GetChildren()) do
+				if child:IsA("TextButton") then
+					child:Destroy()
+				end
+			end
+			optionButtons = {}
+			options = newOptions or {}
+			for i, opt in ipairs(options) do
+				local ob = Instance.new("TextButton")
+				ob.LayoutOrder = i
+				ob.Size = UDim2.new(1, 0, 0, 36)
+				ob.BackgroundColor3 = THEME.BgCard
+				ob.Font = Enum.Font.GothamMedium
+				ob.Text = opt
+				ob.TextColor3 = THEME.TextSecondary
+				ob.TextSize = 12
+				ob.TextXAlignment = Enum.TextXAlignment.Left
+				ob.AutoButtonColor = false
+				ob.Parent = listBox
+				addCorner(ob, 7)
+				addPadding(ob, 0, 10, 0, 10)
+				optionButtons[opt] = ob
 
-			track(ob.Activated:Connect(function()
-				selectOption(opt, true)
-				isOpen = false
-				listBox.Visible = false
-				chevron.Text = "▾"
-			end))
+				track(ob.Activated:Connect(function()
+					selectOption(opt, true)
+					isOpen = false
+					listBox.Visible = false
+					chevron.Text = "▾"
+				end))
+			end
 		end
 
+		rebuildOptions(options)
 		selectOption(selected, false)
 		track(topBtn.Activated:Connect(function()
 			isOpen = not isOpen
@@ -1321,6 +1331,14 @@ function Menu:AddTab(name, iconText)
 		end
 		function ctrl:Get()
 			return selected
+		end
+		function ctrl:SetOptions(newOptions, keepSelection)
+			rebuildOptions(newOptions)
+			local chosen = newOptions[1] or ""
+			if keepSelection and table.find(newOptions, selected) then
+				chosen = selected
+			end
+			selectOption(chosen, chosen ~= selected)
 		end
 		return ctrl
 	end
@@ -3286,6 +3304,896 @@ onMenuDestroy(function()
 end)
 end
 
+do
+local gunTab = Menu:AddTab("PvP / Gun", "⌖")
+gunTab:AddSection("TELEPORT & AIM HEAD PLAYER")
+
+local GUN_MAG_DEFAULTS = {
+	Laser = 6,
+	PlasmaRifle = 10,
+	SlimeBlaster = 8,
+	PlasmaShotgun = 4,
+	ShrinkRay = 3,
+	GravityGun = 4,
+	FreezeRay = 3,
+	PortalHacker = 2,
+	TeslaGun = 6,
+	MindBlower = 3,
+	FFDeactivator = 2,
+	HomingLauncher = 2,
+	DeathRay = 1,
+	MechArm = 10,
+}
+
+if gameRMShared and type(gameRMShared.GUN_STATS) == "table" then
+	for k, st in pairs(gameRMShared.GUN_STATS) do
+		if type(st) == "table" and type(st.mag) == "number" then
+			GUN_MAG_DEFAULTS[k] = st.mag
+		elseif type(st) == "table" and type(st.mag) == "table" then
+			GUN_MAG_DEFAULTS[k] = st.mag[#st.mag] or 10
+		end
+	end
+end
+if gameRMShared and type(gameRMShared.GUNS) == "table" then
+	for k, v in pairs(gameRMShared.GUNS) do
+		if type(v) == "number" and not GUN_MAG_DEFAULTS[k] then
+			GUN_MAG_DEFAULTS[k] = v
+		end
+	end
+end
+
+local AUTO_TARGET_OPTION = "Gần nhất (Tự động)"
+local selectedTargetOption = AUTO_TARGET_OPTION
+local ignorePvpOff = true
+local wallCheckEnabled = false
+local includeNpcTargets = false
+local autoEquipGunEnabled = true
+local aimHeadEnabled = false
+local autoShootEnabled = false
+local stickTpEnabled = false
+local stickBusy = false
+local gunNoLimitedEnabled = false
+local silentServerReload = true
+local tpBehindDistance = 5
+local shootInterval = 0.08
+local manualHoldingFire = false
+local writingAmmoGuard = false
+local origLaserDelay = _G.__laserDelay
+local lastAutoShootAt = 0
+local lastStickTpAt = 0
+local lastSilentReloadAt = {}
+local activeTargetDropdown = nil
+
+local gunStatusLabel = gunTab:AddLabel("Sẵn sàng | Chưa khóa mục tiêu")
+local gunInfoLabel = gunTab:AddLabel("Súng: Chưa cầm | Gun No Limited: TẮT")
+
+local function setLocalAttrSafe(attrName, val)
+	if localPlayer:GetAttribute(attrName) ~= val then
+		writingAmmoGuard = true
+		pcall(function()
+			localPlayer:SetAttribute(attrName, val)
+		end)
+		writingAmmoGuard = false
+	end
+end
+
+local function classifyWeaponTool(tool)
+	if not tool or not tool:IsA("Tool") then
+		return nil, nil
+	end
+	local ik = tool:GetAttribute("ItemKey")
+	if tool.Name == "Laser Pistol" or ik == "LaserPistol" then
+		return "Laser", "Laser"
+	elseif ik == "SleepDartGun" then
+		return "Dart", "SleepDartGun"
+	elseif ik and GUN_MAG_DEFAULTS[ik] ~= nil then
+		return "Item", ik
+	end
+	return nil, nil
+end
+
+local function findPlayerGunTool(allowEquip)
+	local char = localPlayer.Character
+	local hum = char and char:FindFirstChildOfClass("Humanoid")
+	if not char or not hum or hum.Health <= 0 then
+		return nil, nil, nil
+	end
+	for _, ch in ipairs(char:GetChildren()) do
+		local kind, key = classifyWeaponTool(ch)
+		if kind then
+			return kind, key, ch
+		end
+	end
+	if char:GetAttribute("MechArm") then
+		return "MechArm", "MechArm", nil
+	end
+	if allowEquip then
+		local backpack = localPlayer:FindFirstChildOfClass("Backpack")
+		if backpack then
+			local bestTool, bestKind, bestKey = nil, nil, nil
+			for _, ch in ipairs(backpack:GetChildren()) do
+				local kind, key = classifyWeaponTool(ch)
+				if kind then
+					if kind == "Laser" or key == "PlasmaRifle" then
+						bestTool, bestKind, bestKey = ch, kind, key
+						break
+					elseif not bestTool then
+						bestTool, bestKind, bestKey = ch, kind, key
+					end
+				end
+			end
+			if bestTool then
+				pcall(function()
+					hum:EquipTool(bestTool)
+				end)
+				return bestKind, bestKey, bestTool
+			end
+		end
+	end
+	return nil, nil, nil
+end
+
+local function sendGunReloadRemote(gunKey)
+	if not gunKey or gunKey == "" then
+		return
+	end
+	if gunKey == "Laser" then
+		local le = ReplicatedStorage:FindFirstChild("LaserEvent")
+		if le and le:IsA("RemoteEvent") then
+			pcall(function()
+				le:FireServer("reload")
+			end)
+		end
+	elseif gunKey == "MechArm" then
+		local me = ReplicatedStorage:FindFirstChild("MechArmEvent")
+		if me and me:IsA("RemoteEvent") then
+			pcall(function()
+				me:FireServer("reload")
+			end)
+		end
+	else
+		local gr = ReplicatedStorage:FindFirstChild("GunReload")
+		if gr and gr:IsA("RemoteEvent") then
+			pcall(function()
+				gr:FireServer(gunKey)
+			end)
+		end
+	end
+end
+
+local function applyNoLimitedToToolAndAttrs(curKind, curKey, curTool)
+	if not gunNoLimitedEnabled then
+		return
+	end
+	_G.__laserDelay = math.min(shootInterval, 0.05)
+	setLocalAttrSafe("Reloading_Laser", false)
+	setLocalAttrSafe("CD_Laser", nil)
+	setLocalAttrSafe("CDLen_Laser", nil)
+	local laserMax = tonumber(localPlayer:GetAttribute("AmmoMax_Laser")) or GUN_MAG_DEFAULTS.Laser or 6
+	setLocalAttrSafe("Ammo_Laser", laserMax)
+
+	setLocalAttrSafe("DartReloadUntil", 0)
+	setLocalAttrSafe("DartAmmo", 3)
+	setLocalAttrSafe("CD_Taser", 0)
+	setLocalAttrSafe("CD_Cuffs", 0)
+
+	if curKey and curKey ~= "Laser" and curKey ~= "SleepDartGun" then
+		local kMax = tonumber(localPlayer:GetAttribute("AmmoMax_" .. curKey)) or GUN_MAG_DEFAULTS[curKey] or 12
+		setLocalAttrSafe("Ammo_" .. curKey, kMax)
+		setLocalAttrSafe("Reloading_" .. curKey, false)
+		setLocalAttrSafe("CD_" .. curKey, nil)
+		setLocalAttrSafe("CDLen_" .. curKey, nil)
+	end
+
+	if curTool and (curKind == "Item" or curKind == "Dart") then
+		local fastRate = math.max(0.04, shootInterval)
+		if tonumber(curTool:GetAttribute("AutoFire")) ~= fastRate then
+			pcall(function()
+				curTool:SetAttribute("AutoFire", fastRate)
+			end)
+		end
+	end
+end
+
+local function isPlayerTargetEligible(plr)
+	if not plr or plr == localPlayer or plr.Parent ~= Players then
+		return false
+	end
+	if ignorePvpOff then
+		if plr:GetAttribute("PvpOn") == false or plr:GetAttribute("AdminInvisible") == true then
+			return false
+		end
+	end
+	local char = plr.Character
+	local hum = char and char:FindFirstChildOfClass("Humanoid")
+	local head = char and char:FindFirstChild("Head")
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+	if not char or not hum or not head or not hrp or hum.Health <= 0 then
+		return false
+	end
+	return true, head, hrp, hum, char
+end
+
+local function hasLineOfSightToHead(originPos, targetHead, targetChar)
+	local myChar = localPlayer.Character
+	if not myChar or not targetHead then
+		return false
+	end
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	local excludes = { myChar }
+	local fx = Workspace:FindFirstChild("LaserEffects")
+	if fx then
+		table.insert(excludes, fx)
+	end
+	params.FilterDescendantsInstances = excludes
+	local dir = targetHead.Position - originPos
+	local hit = Workspace:Raycast(originPos, dir, params)
+	return (hit == nil) or hit.Instance:IsDescendantOf(targetChar)
+end
+
+local function isNpcModelEligible(model)
+	if not model or not model:IsA("Model") or not model.Parent then
+		return false
+	end
+	if model == localPlayer.Character or Players:GetPlayerFromCharacter(model) then
+		return false
+	end
+	local hum = model:FindFirstChildOfClass("Humanoid")
+	local head = model:FindFirstChild("Head")
+	local hrp = model:FindFirstChild("HumanoidRootPart")
+	if not hum or not head or not hrp or hum.Health <= 0 or hrp.Position.Y < -4000 then
+		return false
+	end
+	return true, head, hrp, hum, model
+end
+
+local function collectNpcTargets()
+	local npcs = {}
+	for _, desc in ipairs(Workspace:GetDescendants()) do
+		if desc:IsA("Humanoid") and desc.Parent and desc.Parent:IsA("Model") then
+			local ok = isNpcModelEligible(desc.Parent)
+			if ok then
+				table.insert(npcs, desc.Parent)
+			end
+		end
+	end
+	return npcs
+end
+
+local function resolveTargetPlayer()
+	local myChar = localPlayer.Character
+	local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
+	local myOrigin = myRoot and myRoot.Position or Vector3.zero
+	local cam = Workspace.CurrentCamera
+	local sightOrigin = (cam and cam.CFrame.Position) or myOrigin
+
+	if selectedTargetOption ~= AUTO_TARGET_OPTION then
+		if string.sub(selectedTargetOption, 1, 5) == "NPC: " then
+			if includeNpcTargets then
+				local npcName = string.sub(selectedTargetOption, 6)
+				for _, m in ipairs(collectNpcTargets()) do
+					if m.Name == npcName then
+						local ok, head, hrp, hum, tChar = isNpcModelEligible(m)
+						if ok then
+							local dist = (hrp.Position - myOrigin).Magnitude
+							if (not wallCheckEnabled) or hasLineOfSightToHead(sightOrigin, head, tChar) then
+								return m, head, hrp, hum, dist
+							end
+						end
+					end
+				end
+			end
+			return nil, nil, nil, nil, math.huge
+		end
+
+		local exact = Players:FindFirstChild(selectedTargetOption)
+		if exact then
+			local ok, head, hrp, hum, tChar = isPlayerTargetEligible(exact)
+			if ok then
+				local dist = (hrp.Position - myOrigin).Magnitude
+				if (not wallCheckEnabled) or hasLineOfSightToHead(sightOrigin, head, tChar) then
+					return exact, head, hrp, hum, dist
+				end
+			end
+		end
+		return nil, nil, nil, nil, math.huge
+	end
+
+	local bestPlr, bestHead, bestHrp, bestHum = nil, nil, nil, nil
+	local bestDist = math.huge
+	for _, plr in ipairs(Players:GetPlayers()) do
+		local ok, head, hrp, hum, tChar = isPlayerTargetEligible(plr)
+		if ok then
+			local d = (hrp.Position - myOrigin).Magnitude
+			if d < bestDist then
+				if (not wallCheckEnabled) or hasLineOfSightToHead(sightOrigin, head, tChar) then
+					bestDist = d
+					bestPlr, bestHead, bestHrp, bestHum = plr, head, hrp, hum
+				end
+			end
+		end
+	end
+	if not bestPlr and includeNpcTargets then
+		for _, m in ipairs(collectNpcTargets()) do
+			local ok, head, hrp, hum, tChar = isNpcModelEligible(m)
+			if ok then
+				local d = (hrp.Position - myOrigin).Magnitude
+				if d < bestDist then
+					if (not wallCheckEnabled) or hasLineOfSightToHead(sightOrigin, head, tChar) then
+						bestDist = d
+						bestPlr, bestHead, bestHrp, bestHum = m, head, hrp, hum
+					end
+				end
+			end
+		end
+	end
+	return bestPlr, bestHead, bestHrp, bestHum, bestDist
+end
+
+local function aimCameraAndCharAtHead(targetHead)
+	if not targetHead or not targetHead.Parent then
+		return
+	end
+	local char = localPlayer.Character
+	local root = char and char:FindFirstChild("HumanoidRootPart")
+	local head = char and char:FindFirstChild("Head")
+	local targetPos = targetHead.Position
+
+	if root and char then
+		local flatLook = Vector3.new(targetPos.X, root.Position.Y, targetPos.Z)
+		if (flatLook - root.Position).Magnitude > 0.2 then
+			root.CFrame = CFrame.lookAt(root.Position, flatLook)
+		end
+		local dirOrigin = (head and head.Position) or root.Position
+		local aimVec = targetPos - dirOrigin
+		if aimVec.Magnitude > 0.1 then
+			char:SetAttribute("AimDir", aimVec.Unit)
+		end
+	end
+
+	local cam = Workspace.CurrentCamera
+	if cam and cam.CameraType ~= Enum.CameraType.Scriptable then
+		local focusPos = (head and head.Position) or (root and root.Position) or cam.Focus.Position
+		local toTarget = targetPos - focusPos
+		if toTarget.Magnitude > 0.1 then
+			local unitDir = toTarget.Unit
+			local camBackDist = math.clamp((cam.CFrame.Position - cam.Focus.Position).Magnitude, 6, 14)
+			local camPos = focusPos - unitDir * camBackDist + Vector3.new(0, 1.8, 0)
+			cam.CFrame = CFrame.lookAt(camPos, targetPos)
+		else
+			cam.CFrame = CFrame.lookAt(cam.CFrame.Position, targetPos)
+		end
+		local okScreen, screenPt = pcall(function()
+			return cam:WorldToViewportPoint(targetPos)
+		end)
+		if okScreen and screenPt and screenPt.Z > 0 then
+			_G.__gunTap = { t = clockNow(), x = screenPt.X, y = screenPt.Y }
+		end
+	end
+end
+
+local function teleportBehindPlayerTarget(targetHrp, targetHead)
+	if not targetHrp or not targetHrp.Parent then
+		return false
+	end
+	local behindPos = targetHrp.Position - targetHrp.CFrame.LookVector * tpBehindDistance
+	local ok = teleportCharacterTo(behindPos, Vector3.new(0, 1.2, 0), targetHead and targetHead.Position or targetHrp.Position, 2.2)
+	if ok and targetHead then
+		aimCameraAndCharAtHead(targetHead)
+	end
+	return ok
+end
+
+local function computeCrosshairWorldPos()
+	local cam = Workspace.CurrentCamera
+	local char = localPlayer.Character
+	if not cam then
+		return Vector3.new(0, 0, -100)
+	end
+	local vp = cam.ViewportSize
+	local sx, sy = vp.X * 0.5, vp.Y * 0.5
+	if UserInputService.MouseEnabled and not UserInputService.TouchEnabled then
+		local m = UserInputService:GetMouseLocation()
+		sx, sy = m.X, m.Y
+	end
+	local ray = cam:ViewportPointToRay(sx, sy)
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.FilterDescendantsInstances = char and { char } or {}
+	local res = Workspace:Raycast(ray.Origin, ray.Direction * 500, params)
+	return res and res.Position or (ray.Origin + ray.Direction * 500)
+end
+
+local function fireGunAtPosition(targetPos, allowEquip)
+	local char = localPlayer.Character
+	local hum = char and char:FindFirstChildOfClass("Humanoid")
+	local root = char and char:FindFirstChild("HumanoidRootPart")
+	local head = char and char:FindFirstChild("Head")
+	if not char or not hum or not root or hum.Health <= 0 then
+		return false, "Chưa có nhân vật"
+	end
+
+	local kind, gunKey, tool = findPlayerGunTool(allowEquip)
+	if not kind then
+		return false, "Không tìm thấy Súng trong Character/Backpack"
+	end
+
+	applyNoLimitedToToolAndAttrs(kind, gunKey, tool)
+
+	local originPos = (head and head.Position) or root.Position
+	if kind == "Laser" or kind == "MechArm" then
+		local muzzle = (tool and (tool:FindFirstChild("Muzzle", true) or tool:FindFirstChild("Handle")))
+			or (kind == "MechArm" and char:FindFirstChild("M2_Barrel", true))
+		if muzzle and muzzle:IsA("Attachment") then
+			originPos = muzzle.WorldPosition
+		elseif muzzle and muzzle:IsA("BasePart") then
+			originPos = muzzle.Position
+		end
+	end
+	local diff = targetPos - originPos
+	local unitDir = diff.Magnitude > 0.05 and diff.Unit or root.CFrame.LookVector
+	char:SetAttribute("AimDir", unitDir)
+
+	if kind == "Laser" then
+		local le = ReplicatedStorage:FindFirstChild("LaserEvent")
+		if le and le:IsA("RemoteEvent") then
+			pcall(function()
+				le:FireServer("fire", originPos, unitDir)
+			end)
+			return true, "Laser -> Head"
+		end
+	elseif kind == "MechArm" then
+		local me = ReplicatedStorage:FindFirstChild("MechArmEvent")
+		if me and me:IsA("RemoteEvent") then
+			pcall(function()
+				me:FireServer("fire", originPos, unitDir)
+			end)
+			return true, "MechArm -> Head"
+		end
+	else
+		local ie = ReplicatedStorage:FindFirstChild("ItemEvent")
+		if ie and ie:IsA("RemoteEvent") then
+			pcall(function()
+				if gunKey == "DeathRay" then
+					ie:FireServer("rayAim", unitDir)
+				end
+				ie:FireServer("use", gunKey, unitDir.X, unitDir.Y, unitDir.Z)
+			end)
+			return true, gunKey .. " -> Head"
+		end
+	end
+
+	if tool then
+		pcall(function()
+			tool:Activate()
+		end)
+		return true, tool.Name
+	end
+	return false, "Thiếu Remote bắn súng"
+end
+
+local function refreshGunInfoStatus()
+	local kind, gunKey = findPlayerGunTool(false)
+	local toolStr = gunKey or "Chưa cầm"
+	local ammoStr = "∞"
+	if not gunNoLimitedEnabled and gunKey then
+		if gunKey == "SleepDartGun" then
+			ammoStr = tostring(tonumber(localPlayer:GetAttribute("DartAmmo")) or 3) .. "/3"
+		else
+			local mx = tonumber(localPlayer:GetAttribute("AmmoMax_" .. gunKey)) or GUN_MAG_DEFAULTS[gunKey] or 6
+			local cur = tonumber(localPlayer:GetAttribute("Ammo_" .. gunKey)) or mx
+			ammoStr = cur .. "/" .. mx
+		end
+	end
+	local modeStr = gunNoLimitedEnabled and "VÔ HẠN: BẬT" or "Vô hạn: TẮT"
+	gunInfoLabel:Set(string.format("Súng: %s | Đạn: %s | %s", toolStr, ammoStr, modeStr))
+
+	local targetPlr, _, _, targetHum, dist = resolveTargetPlayer()
+	if targetPlr and targetHum then
+		gunStatusLabel:Set(
+			string.format(
+				"Mục tiêu: %s (%.0f st) | HP %d/%d",
+				targetPlr.Name,
+				dist,
+				math.round(targetHum.Health),
+				math.round(targetHum.MaxHealth)
+			)
+		)
+	end
+end
+SharedState.RefreshGunUi = refreshGunInfoStatus
+
+local function buildPlayerDropdownList()
+	local opts = { AUTO_TARGET_OPTION }
+	for _, plr in ipairs(Players:GetPlayers()) do
+		if plr ~= localPlayer then
+			table.insert(opts, plr.Name)
+		end
+	end
+	if includeNpcTargets then
+		local seenNpc = {}
+		for _, m in ipairs(collectNpcTargets()) do
+			local label = "NPC: " .. m.Name
+			if not seenNpc[label] then
+				seenNpc[label] = true
+				table.insert(opts, label)
+			end
+		end
+	end
+	if activeTargetDropdown then
+		activeTargetDropdown:SetOptions(opts, true)
+	end
+	return opts
+end
+
+activeTargetDropdown = gunTab:AddDropdown({
+	Name = "Chọn Player Mục Tiêu",
+	Options = buildPlayerDropdownList(),
+	Default = AUTO_TARGET_OPTION,
+	Dynamic = true,
+	Callback = function(opt)
+		selectedTargetOption = opt
+		refreshGunInfoStatus()
+	end,
+})
+
+track(Players.PlayerAdded:Connect(function()
+	if not destroyed then
+		task.defer(buildPlayerDropdownList)
+	end
+end))
+track(Players.PlayerRemoving:Connect(function()
+	if not destroyed then
+		task.defer(buildPlayerDropdownList)
+	end
+end))
+
+gunTab:AddButton({
+	Name = "Làm mới DS Player",
+	Description = "Cập nhật danh sách người chơi hiện có trong server",
+	Callback = function()
+		local list = buildPlayerDropdownList()
+		local count = math.max(0, #list - 1)
+		gunStatusLabel:Set(string.format("Đã cập nhật: %d Player trong phòng", count))
+		refreshGunInfoStatus()
+	end,
+})
+
+gunTab:AddButton({
+	Name = "Teleport tới Player",
+	Description = "Dịch chuyển ra sau lưng Player & xoay Aim vào Head",
+	Callback = function()
+		local targetPlr, targetHead, targetHrp, _, dist = resolveTargetPlayer()
+		if not targetPlr or not targetHead or not targetHrp then
+			gunStatusLabel:Set("Không tìm thấy Player hợp lệ!")
+			Menu:Notify("PvP / Gun", "Chưa tìm thấy Player mục tiêu phù hợp.", 2)
+			return
+		end
+		teleportBehindPlayerTarget(targetHrp, targetHead)
+		gunStatusLabel:Set(string.format("Đã TP tới %s (cách %.0f st)", targetPlr.Name, dist))
+		Menu:Notify("Teleport Player", "Đã TP & Aim Head: " .. targetPlr.Name, 2)
+	end,
+})
+
+gunTab:AddToggle({
+	Name = "Bám theo Player (Stick TP)",
+	Description = "Liên tục giữ vị trí sau lưng Player mục tiêu",
+	Default = false,
+	Callback = function(on)
+		stickTpEnabled = on
+		Menu:Notify("Stick TP", on and "Đang bật bám theo Player mục tiêu" or "Đã tắt Stick TP", 1.8)
+	end,
+})
+
+gunTab:AddToggle({
+	Name = "Aim Camera vào Head Player",
+	Description = "Tự xoay Camera + Character ngắm thẳng Head mục tiêu",
+	Default = false,
+	Callback = function(on)
+		aimHeadEnabled = on
+		Menu:Notify("Aim Head", on and "Đã bật khóa tâm vào Head Player" or "Đã tắt Aim Head", 1.8)
+	end,
+})
+
+gunTab:AddToggle({
+	Name = "Auto Bắn Head Player (Aim+Shoot)",
+	Description = "Tự cầm súng, xoay Aim Head & bắn liên tục vào Head",
+	Default = false,
+	Callback = function(on)
+		autoShootEnabled = on
+		Menu:Notify("Auto Shoot Head", on and "Đang bật Auto Aim & Shoot Head" or "Đã tắt Auto Shoot", 2)
+	end,
+})
+
+gunTab:AddButton({
+	Name = "TP + Bắn Head 1 Lần",
+	Description = "Combo: TP sau lưng Player, khóa Head & nã loạt đạn",
+	Callback = function()
+		task.spawn(function()
+			local targetPlr, targetHead, targetHrp = resolveTargetPlayer()
+			if not targetPlr or not targetHead or not targetHrp then
+				gunStatusLabel:Set("Không tìm thấy Player hợp lệ để bắn!")
+				Menu:Notify("PvP / Gun", "Không có Player mục tiêu.", 2)
+				return
+			end
+			findPlayerGunTool(autoEquipGunEnabled)
+			teleportBehindPlayerTarget(targetHrp, targetHead)
+			task.wait(0.32)
+			for _ = 1, 3 do
+				if destroyed or not targetHead.Parent then
+					break
+				end
+				aimCameraAndCharAtHead(targetHead)
+				local okFire, msgFire = fireGunAtPosition(targetHead.Position, autoEquipGunEnabled)
+				if not okFire then
+					gunStatusLabel:Set("Lỗi: " .. msgFire)
+					Menu:Notify("PvP / Gun", msgFire, 2.2)
+					return
+				end
+				task.wait(math.max(0.06, shootInterval))
+			end
+			gunStatusLabel:Set("Đã TP & bắn Head -> " .. targetPlr.Name)
+			Menu:Notify("PvP / Gun", "Đã TP & bắn Head -> " .. targetPlr.Name, 2)
+		end)
+	end,
+})
+
+gunTab:AddSection("GUN SHOOT NO LIMITED")
+
+gunTab:AddToggle({
+	Name = "Gun Shoot No Limited (Bắn Vô Hạn)",
+	Description = "Bỏ khóa 6 viên/chờ Reload & mở Rapid Fire mọi loại súng",
+	Default = false,
+	Callback = function(on)
+		gunNoLimitedEnabled = on
+		if on then
+			origLaserDelay = _G.__laserDelay
+			local kind, key, tool = findPlayerGunTool(false)
+			applyNoLimitedToToolAndAttrs(kind, key, tool)
+			Menu:Notify("Gun No Limited", "Đã bật Bắn Vô Hạn (bỏ chờ 6 viên & Reload)!", 2.4)
+		else
+			_G.__laserDelay = origLaserDelay
+			Menu:Notify("Gun No Limited", "Đã tắt Bắn Vô Hạn.", 1.8)
+		end
+		refreshGunInfoStatus()
+	end,
+})
+
+gunTab:AddToggle({
+	Name = "Auto Reload Ngầm (Đồng bộ Server)",
+	Description = "Khi server báo hết băng đạn tự gửi Reload ngầm không khựng",
+	Default = true,
+	Callback = function(on)
+		silentServerReload = on
+	end,
+})
+
+gunTab:AddButton({
+	Name = "Gửi Reload Ngay (Server Sync)",
+	Description = "Ép gửi tín hiệu nạp đạn ngầm cho súng đang cầm",
+	Callback = function()
+		local _, gunKey = findPlayerGunTool(false)
+		if gunKey then
+			sendGunReloadRemote(gunKey)
+			Menu:Notify("Gun Reload", "Đã gửi reload -> " .. gunKey, 1.8)
+		else
+			Menu:Notify("Gun Reload", "Chưa cầm súng nào.", 1.8)
+		end
+	end,
+})
+
+gunTab:AddSection("CÀI ĐẶT COMBAT")
+
+gunTab:AddSlider({
+	Name = "Tốc độ bắn Auto (Giây)",
+	Min = 0.04,
+	Max = 0.50,
+	Default = 0.08,
+	Step = 0.02,
+	Suffix = "s",
+	Callback = function(val)
+		shootInterval = val
+		if gunNoLimitedEnabled then
+			_G.__laserDelay = math.min(val, 0.05)
+		end
+	end,
+})
+
+gunTab:AddSlider({
+	Name = "Khoảng cách TP sau lưng",
+	Min = 2,
+	Max = 20,
+	Default = 5,
+	Step = 1,
+	Suffix = " st",
+	Callback = function(val)
+		tpBehindDistance = val
+	end,
+})
+
+gunTab:AddToggle({
+	Name = "Tự tìm & cầm Súng (Auto Equip)",
+	Description = "Tự trang bị súng từ Backpack khi bật Auto Shoot",
+	Default = true,
+	Callback = function(on)
+		autoEquipGunEnabled = on
+	end,
+})
+
+gunTab:AddToggle({
+	Name = "Bỏ qua Player tắt PvP",
+	Description = "Không ngắm Player đang để PvpOn = false hoặc ẩn",
+	Default = true,
+	Callback = function(on)
+		ignorePvpOff = on
+	end,
+})
+
+gunTab:AddToggle({
+	Name = "Kiểm tra Tường (Wall Check)",
+	Description = "Chỉ khóa/bắn Head khi nhìn thấy trực tiếp không bị tường chắn",
+	Default = false,
+	Callback = function(on)
+		wallCheckEnabled = on
+	end,
+})
+
+gunTab:AddToggle({
+	Name = "Bao gồm Dummy / NPC (Thử Súng)",
+	Description = "Cho phép Aim Head & Auto Shoot cả NPC/Dummy khi solo",
+	Default = false,
+	Callback = function(on)
+		includeNpcTargets = on
+		buildPlayerDropdownList()
+		refreshGunInfoStatus()
+	end,
+})
+
+local function isPosInsideGuiObj(guiObj, pos)
+	if not guiObj or not guiObj.Visible then
+		return false
+	end
+	local p = guiObj.AbsolutePosition
+	local s = guiObj.AbsoluteSize
+	return pos.X >= p.X and pos.X <= (p.X + s.X) and pos.Y >= p.Y and pos.Y <= (p.Y + s.Y)
+end
+
+track(UserInputService.InputBegan:Connect(function(input, gameProcessed)
+	if destroyed or gameProcessed then
+		return
+	end
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		if (isMenuOpen and isPosInsideGuiObj(mainFrame, input.Position)) or isPosInsideGuiObj(floatButton, input.Position) then
+			return
+		end
+		manualHoldingFire = true
+	end
+end))
+
+track(UserInputService.InputEnded:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		manualHoldingFire = false
+	end
+end))
+
+track(localPlayer.AttributeChanged:Connect(function(attrName)
+	if destroyed or writingAmmoGuard then
+		return
+	end
+	if string.sub(attrName, 1, 5) == "Ammo_" or string.sub(attrName, 1, 10) == "Reloading_" or attrName == "DartAmmo" or attrName == "DartReloadUntil" then
+		if gunNoLimitedEnabled then
+			local now = clockNow()
+			if attrName == "DartAmmo" then
+				local v = tonumber(localPlayer:GetAttribute("DartAmmo")) or 0
+				if v <= 0 and silentServerReload and (now - (lastSilentReloadAt.SleepDartGun or 0)) > 2.2 then
+					lastSilentReloadAt.SleepDartGun = now
+					task.spawn(sendGunReloadRemote, "SleepDartGun")
+				end
+				setLocalAttrSafe("DartAmmo", 3)
+			elseif attrName == "DartReloadUntil" then
+				setLocalAttrSafe("DartReloadUntil", 0)
+			elseif string.sub(attrName, 1, 5) == "Ammo_" then
+				local key = string.sub(attrName, 6)
+				local v = tonumber(localPlayer:GetAttribute(attrName)) or 0
+				if v <= 0 and silentServerReload and (now - (lastSilentReloadAt[key] or 0)) > 2.0 then
+					lastSilentReloadAt[key] = now
+					task.spawn(sendGunReloadRemote, key)
+				end
+				local maxVal = tonumber(localPlayer:GetAttribute("AmmoMax_" .. key)) or GUN_MAG_DEFAULTS[key] or 6
+				setLocalAttrSafe(attrName, maxVal)
+			elseif string.sub(attrName, 1, 10) == "Reloading_" then
+				if localPlayer:GetAttribute(attrName) == true then
+					setLocalAttrSafe(attrName, false)
+				end
+			end
+		end
+		if SharedState.RefreshGunUi then
+			SharedState.RefreshGunUi()
+		end
+	end
+end))
+
+pcall(function()
+	RunService:UnbindFromRenderStep("ShadowAimHead")
+end)
+RunService:BindToRenderStep("ShadowAimHead", Enum.RenderPriority.Last.Value + 5, function()
+	if destroyed then
+		return
+	end
+	if gunNoLimitedEnabled then
+		local k, gk, t = findPlayerGunTool(false)
+		applyNoLimitedToToolAndAttrs(k, gk, t)
+	end
+	if aimHeadEnabled or autoShootEnabled then
+		local targetPlr, targetHead = resolveTargetPlayer()
+		if targetPlr and targetHead then
+			aimCameraAndCharAtHead(targetHead)
+		end
+	end
+end)
+
+track(RunService.Heartbeat:Connect(function()
+	if destroyed then
+		return
+	end
+	local now = clockNow()
+	if stickTpEnabled and not stickBusy and (now - lastStickTpAt) >= 0.08 then
+		lastStickTpAt = now
+		local targetPlr, targetHead, targetHrp = resolveTargetPlayer()
+		if targetPlr and targetHrp and targetHead then
+			stickBusy = true
+			task.spawn(function()
+				teleportBehindPlayerTarget(targetHrp, targetHead)
+				stickBusy = false
+			end)
+		end
+	end
+
+	local wantAutoShoot = autoShootEnabled
+	local wantManualRapid = gunNoLimitedEnabled and manualHoldingFire and (findPlayerGunTool(false) ~= nil)
+	if (wantAutoShoot or wantManualRapid) and (now - lastAutoShootAt) >= shootInterval then
+		if wantAutoShoot then
+			local targetPlr, targetHead = resolveTargetPlayer()
+			if targetPlr and targetHead then
+				lastAutoShootAt = now
+				aimCameraAndCharAtHead(targetHead)
+				local okFire, msgFire = fireGunAtPosition(targetHead.Position, autoEquipGunEnabled)
+				if not okFire then
+					gunStatusLabel:Set("Auto Shoot: " .. msgFire)
+				end
+			end
+		elseif wantManualRapid then
+			lastAutoShootAt = now
+			local firePos = nil
+			if aimHeadEnabled then
+				local _, targetHead = resolveTargetPlayer()
+				if targetHead then
+					aimCameraAndCharAtHead(targetHead)
+					firePos = targetHead.Position
+				end
+			end
+			if not firePos then
+				firePos = computeCrosshairWorldPos()
+			end
+			fireGunAtPosition(firePos, false)
+		end
+	end
+end))
+
+onMenuDestroy(function()
+	stickTpEnabled = false
+	aimHeadEnabled = false
+	autoShootEnabled = false
+	gunNoLimitedEnabled = false
+	manualHoldingFire = false
+	_G.__laserDelay = origLaserDelay
+	pcall(function()
+		RunService:UnbindFromRenderStep("ShadowAimHead")
+	end)
+end)
+end
+
 local lastMatCounts = {}
 for attrName, attrVal in pairs(localPlayer:GetAttributes()) do
 	if string.sub(attrName, 1, 4) == "Mat_" then
@@ -3324,6 +4232,9 @@ task.defer(function()
 	if SharedState.RefreshLootUi then
 		SharedState.RefreshLootUi()
 	end
+	if SharedState.RefreshGunUi then
+		SharedState.RefreshGunUi()
+	end
 end)
 
-Menu:Notify("Shadow Menu", "Auto Loot & Quick Craft (" .. (UserInputService.TouchEnabled and "Mobile" or "PC") .. ") sẵn sàng!", 3)
+Menu:Notify("Shadow Menu", "Auto Loot, Quick Craft & PvP Gun (" .. (UserInputService.TouchEnabled and "Mobile" or "PC") .. ") sẵn sàng!", 3)
